@@ -1,0 +1,17 @@
+constitution
+↓
+glossary
+↓
+ontology
+↓
+data_model
+↓
+system_architecture
+↓
+creative_state_model
+↓
+session_loop
+↓
+evaluation_signals
+↓
+runtime
