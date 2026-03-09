@@ -5,5 +5,7 @@
 
 export { runSessionPipeline } from "./session-pipeline.js";
 export type { SessionContext, SessionPipelineResult } from "./session-pipeline.js";
+export { generateImage } from "./generate-image.js";
+export type { GenerateImageInput, GenerateImageOutput } from "./generate-image.js";
 export { createGenerationRun } from "./provenance.js";
 export type { CreateGenerationRunInput } from "./provenance.js";

@@ -67,8 +67,9 @@ export async function runCritique(
 
   const userContent = `Artifact title: ${input.title ?? "Untitled"}\nSummary: ${input.summary ?? "—"}\nContent:\n${content.slice(0, 6000)}`;
 
+  const model = process.env.OPENAI_MODEL_CRITIQUE ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini";
   const completion = await client.chat.completions.create({
-    model: "gpt-4o-mini",
+    model,
     messages: [
       { role: "system", content: RUBRIC_SYSTEM },
       { role: "user", content: userContent },

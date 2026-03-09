@@ -10,6 +10,7 @@ export default function StudioHome() {
       <nav style={{ display: "flex", gap: "1rem", marginTop: "1rem", flexWrap: "wrap", alignItems: "center" }}>
         <Link href="/source">Source library (brain)</Link>
         <Link href="/session">Start session</Link>
+        <Link href="/concepts">Concepts</Link>
         <Link href="/review/artifacts">Artifact review queue</Link>
         <Link href="/review/surface">Surface proposals (avatar, habitat, name)</Link>
         <Link href="/review/system">System proposals</Link>

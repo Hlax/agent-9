@@ -14,10 +14,36 @@ import { getLatestCreativeState } from "@/lib/creative-state-load";
 import { getBrainContext, buildWorkingContextString } from "@/lib/brain-context";
 import { createClient } from "@/lib/supabase/server";
 
+/** Create bucket "artifacts" in Supabase Dashboard → Storage if missing. */
+const ARTIFACTS_BUCKET = "artifacts";
+
+/**
+ * Fetch image from URL and upload to Supabase Storage. Returns public URL or null.
+ */
+async function uploadImageToStorage(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServer>>,
+  imageUrl: string,
+  sessionId: string,
+  artifactId: string
+): Promise<string | null> {
+  const res = await fetch(imageUrl).catch(() => null);
+  if (!res?.ok) return null;
+  const blob = await res.blob();
+  const ext = blob.type === "image/png" ? "png" : "webp";
+  const path = `${sessionId}/${artifactId}.${ext}`;
+  const { error } = await supabase.storage.from(ARTIFACTS_BUCKET).upload(path, blob, {
+    contentType: blob.type,
+    upsert: true,
+  });
+  if (error) return null;
+  const { data: urlData } = supabase.storage.from(ARTIFACTS_BUCKET).getPublicUrl(path);
+  return urlData?.publicUrl ?? null;
+}
+
 /**
  * POST /api/session/run — run one session pipeline.
  * Requires authenticated user. Loads identity/reference source context when DB is configured.
- * Body (optional): { promptContext?: string } — when provided, used as session prompt/direction (e.g. from Studio chat).
+ * Body (optional): { promptContext?: string, preferMedium?: "writing" | "concept" | "image" }.
  */
 export async function POST(request: Request) {
   try {
@@ -29,10 +55,14 @@ export async function POST(request: Request) {
       }
     }
     let promptContext: string | null = null;
+    let preferMedium: "writing" | "concept" | "image" | null = null;
     try {
       const body = await request.json().catch(() => ({}));
       if (typeof body?.promptContext === "string" && body.promptContext.trim()) {
         promptContext = body.promptContext.trim();
+      }
+      if (body?.preferMedium === "image" || body?.preferMedium === "writing" || body?.preferMedium === "concept") {
+        preferMedium = body.preferMedium;
       }
     } catch {
       // no body
@@ -44,23 +74,37 @@ export async function POST(request: Request) {
     const selectedDrive = selectDrive(driveWeights);
     const brainContext = await getBrainContext(supabase);
     const workingContextString = buildWorkingContextString(brainContext);
+    const effectiveMode = preferMedium === "concept" ? "reflect" : mode;
     const result = await runSessionPipeline(
       {
-        mode,
+        mode: effectiveMode,
         selectedDrive,
         projectId: undefined,
         promptContext: promptContext ?? undefined,
         sourceContext: workingContextString || undefined,
+        preferMedium: preferMedium ?? undefined,
       },
       { openaiApiKey: process.env.OPENAI_API_KEY ?? undefined }
     );
 
-    const artifact = result.artifacts[0];
+    let artifact = result.artifacts[0];
     if (!artifact) {
       return NextResponse.json({
         session_id: result.session.session_id,
         artifact_count: 0,
       });
+    }
+
+    if (artifact.medium === "image" && artifact.content_uri && supabase) {
+      const storageUrl = await uploadImageToStorage(
+        supabase,
+        artifact.content_uri,
+        result.session.session_id,
+        artifact.artifact_id
+      );
+      if (storageUrl) {
+        artifact = { ...artifact, content_uri: storageUrl, preview_uri: storageUrl };
+      }
     }
 
     const critique = await runCritique(
@@ -211,7 +255,12 @@ export async function POST(request: Request) {
         artifact_id: artifact.artifact_id,
         medium: artifact.medium,
         provider_name: "openai",
-        model_name: "gpt-4o-mini",
+        model_name:
+          artifact.medium === "image"
+            ? (process.env.OPENAI_MODEL_IMAGE ?? "gpt-5-nano")
+            : artifact.medium === "concept"
+              ? (process.env.OPENAI_MODEL_CONCEPT ?? process.env.OPENAI_MODEL_GENERATION ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini")
+              : (process.env.OPENAI_MODEL_GENERATION ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini"),
         prompt_snapshot: null,
         context_snapshot: null,
         run_status: "completed",

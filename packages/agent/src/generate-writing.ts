@@ -57,8 +57,12 @@ export async function generateWriting(
 
   const userPrompt = buildUserPrompt(input);
 
+  const isConcept = input.mode === "reflect";
+  const model = isConcept
+    ? (process.env.OPENAI_MODEL_CONCEPT ?? process.env.OPENAI_MODEL_GENERATION ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini")
+    : (process.env.OPENAI_MODEL_GENERATION ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini");
   const completion = await client.chat.completions.create({
-    model: "gpt-4o-mini",
+    model,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: userPrompt },

@@ -1,4 +1,6 @@
 # Supabase local config. See https://supabase.com/docs/guides/cli/config
+# project_id is required; set to your hosted project ref when using supabase link / db push
+project_id = "uhgsxfypylutfcluuvxc"
 
 [api]
 enabled = true

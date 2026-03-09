@@ -95,14 +95,21 @@ artifacts/
   published/
 ```
 
+### Prerequisites
+
+- **Supabase CLI** — required for all `db:*` scripts (migrate, generate, reset, verify). It is installed as a project dev dependency; run `pnpm install` and use the scripts below. To install the CLI globally or via another method, see [Install the Supabase CLI](https://supabase.com/docs/guides/cli/getting-started).
+
 ### Commands (pnpm)
 
-- `pnpm install` — install dependencies
+- `pnpm install` — install dependencies (includes Supabase CLI for `db:*` scripts)
 - `pnpm build` — build all packages and apps
 - `pnpm dev:studio` — Studio at http://localhost:3000
 - `pnpm dev:staging` — Staging at http://localhost:3001
 - `pnpm dev:public` — Public site at http://localhost:3002
+- `pnpm db:generate` — generate TypeScript types from local schema into `packages/core/src/db-types.ts` (requires `supabase start`)
 - `pnpm db:migrate` — apply Supabase migrations (requires Supabase CLI and local Supabase)
+- `pnpm db:reset` — reset local DB and reapply all migrations (verifies migrations apply cleanly)
+- `pnpm db:verify` — same as `db:reset` (alias for migration verification)
 
 ### Review Lanes (Studio)
 

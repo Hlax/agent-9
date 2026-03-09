@@ -12,6 +12,7 @@ import type {
   ArtifactMedium,
 } from "@twin/core";
 import { generateWriting } from "./generate-writing";
+import { generateImage } from "./generate-image";
 
 export interface SessionContext {
   /** Loaded for session start; identity, recent sessions, threads, etc. */
@@ -23,6 +24,8 @@ export interface SessionContext {
   promptContext?: string | null;
   /** Optional: retrieved source context for generation (Phase 2 identity seed). */
   sourceContext?: string | null;
+  /** When "image", generate an image artifact (OPENAI_MODEL_IMAGE); otherwise writing/concept. */
+  preferMedium?: "writing" | "concept" | "image" | null;
 }
 
 export interface SessionPipelineResult {
@@ -62,16 +65,28 @@ export async function runSessionPipeline(
     throw new Error("OPENAI_API_KEY is required for generation");
   }
 
-  const generated = await generateWriting(
-    {
-      mode: context.mode,
-      promptContext: context.promptContext,
-      sourceContext: context.sourceContext,
-    },
-    { apiKey }
-  );
+  const preferImage = context.preferMedium === "image";
+
+  const generated = preferImage
+    ? await generateImage(
+        {
+          mode: context.mode,
+          promptContext: context.promptContext,
+          sourceContext: context.sourceContext,
+        },
+        { apiKey }
+      )
+    : await generateWriting(
+        {
+          mode: context.mode,
+          promptContext: context.promptContext,
+          sourceContext: context.sourceContext,
+        },
+        { apiKey }
+      );
 
   const medium: ArtifactMedium = generated.medium;
+  const contentUri = preferImage && "content_uri" in generated ? generated.content_uri : null;
   const artifact: Artifact = {
     artifact_id: crypto.randomUUID(),
     project_id: context.projectId ?? null,
@@ -85,8 +100,8 @@ export async function runSessionPipeline(
     current_approval_state: "pending_review",
     current_publication_state: "private",
     content_text: generated.content_text,
-    content_uri: null,
-    preview_uri: null,
+    content_uri: contentUri,
+    preview_uri: contentUri,
     notes: null,
     alignment_score: null,
     emergence_score: null,
