@@ -7,6 +7,7 @@
 import type {
   Artifact,
   CreativeSession,
+  CreativeDrive,
   SessionMode,
   ArtifactMedium,
 } from "@twin/core";
@@ -17,6 +18,8 @@ export interface SessionContext {
   identityId?: string;
   projectId?: string;
   mode: SessionMode;
+  /** Selected drive for this session (from drive weights). */
+  selectedDrive?: CreativeDrive | null;
   promptContext?: string | null;
   /** Optional: retrieved source context for generation (Phase 2 identity seed). */
   sourceContext?: string | null;
@@ -44,7 +47,7 @@ export async function runSessionPipeline(
     session_id: crypto.randomUUID(),
     project_id: context.projectId ?? null,
     mode: context.mode,
-    selected_drive: null,
+    selected_drive: context.selectedDrive ?? null,
     title: null,
     prompt_context: context.promptContext ?? null,
     reflection_notes: null,

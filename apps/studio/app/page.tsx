@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { SignOut } from "./sign-out";
+import { StudioChat } from "./components/studio-chat";
 
 export default function StudioHome() {
   return (
@@ -10,9 +11,11 @@ export default function StudioHome() {
         <Link href="/source">Source library (brain)</Link>
         <Link href="/session">Start session</Link>
         <Link href="/review/artifacts">Artifact review queue</Link>
-        <Link href="/review/surface">Surface proposals (avatar &amp; habitat)</Link>
+        <Link href="/review/surface">Surface proposals (avatar, habitat, name)</Link>
+        <Link href="/review/system">System proposals</Link>
         <SignOut />
       </nav>
+      <StudioChat />
     </main>
   );
 }

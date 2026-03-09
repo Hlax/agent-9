@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { HabitatProposalList } from "./habitat-proposal-list";
 
 /**
  * Public habitat proposal review path.
@@ -16,9 +17,7 @@ export default function PublicHabitatProposalReviewPage() {
         <Link href="/review/surface">← Surface proposals</Link>
       </p>
       <section style={{ marginTop: "1rem" }}>
-        <p>
-          <em>Stub: list proposal_record where lane_type = surface and target_type = public_habitat_proposal (or staging_habitat).</em>
-        </p>
+        <HabitatProposalList />
       </section>
     </main>
   );

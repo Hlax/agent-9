@@ -1,15 +1,25 @@
 import { NextResponse } from "next/server";
 import { runSessionPipeline } from "@twin/agent";
-import { runCritique, computeEvaluationSignals } from "@twin/evaluation";
+import {
+  runCritique,
+  computeEvaluationSignals,
+  updateCreativeState,
+  stateToSnapshotRow,
+  computeDriveWeights,
+  computeSessionMode,
+  selectDrive,
+} from "@twin/evaluation";
 import { getSupabaseServer } from "@/lib/supabase-server";
-import { getSourceContextForSession } from "@/lib/source-context";
+import { getLatestCreativeState } from "@/lib/creative-state-load";
+import { getBrainContext, buildWorkingContextString } from "@/lib/brain-context";
 import { createClient } from "@/lib/supabase/server";
 
 /**
  * POST /api/session/run — run one session pipeline.
  * Requires authenticated user. Loads identity/reference source context when DB is configured.
+ * Body (optional): { promptContext?: string } — when provided, used as session prompt/direction (e.g. from Studio chat).
  */
-export async function POST() {
+export async function POST(request: Request) {
   try {
     const authClient = await createClient().catch(() => null);
     if (authClient) {
@@ -18,13 +28,29 @@ export async function POST() {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       }
     }
+    let promptContext: string | null = null;
+    try {
+      const body = await request.json().catch(() => ({}));
+      if (typeof body?.promptContext === "string" && body.promptContext.trim()) {
+        promptContext = body.promptContext.trim();
+      }
+    } catch {
+      // no body
+    }
     const supabase = getSupabaseServer();
-    const sourceContext = supabase ? await getSourceContextForSession(supabase) : null;
+    const { state: previousState } = await getLatestCreativeState(supabase);
+    const mode = computeSessionMode(previousState);
+    const driveWeights = computeDriveWeights(previousState);
+    const selectedDrive = selectDrive(driveWeights);
+    const brainContext = await getBrainContext(supabase);
+    const workingContextString = buildWorkingContextString(brainContext);
     const result = await runSessionPipeline(
       {
-        mode: "explore",
+        mode,
+        selectedDrive,
         projectId: undefined,
-        sourceContext: sourceContext ?? undefined,
+        promptContext: promptContext ?? undefined,
+        sourceContext: workingContextString || undefined,
       },
       { openaiApiKey: process.env.OPENAI_API_KEY ?? undefined }
     );
@@ -204,21 +230,12 @@ export async function POST() {
         );
       }
 
-      const stateSnapshotRow = {
-        state_snapshot_id: crypto.randomUUID(),
-        session_id: result.session.session_id,
-        identity_stability: evaluation.alignment_score,
-        avatar_alignment: evaluation.alignment_score,
-        expression_diversity: evaluation.emergence_score,
-        unfinished_projects: null,
-        recent_exploration_rate: 0.5,
-        creative_tension: evaluation.pull_score,
-        curiosity_level: evaluation.emergence_score,
-        reflection_need: evaluation.recurrence_score ?? 0.3,
-        idea_recurrence: evaluation.recurrence_score,
-        public_curation_backlog: null,
-        notes: critique.overall_summary?.slice(0, 500) ?? null,
-      };
+      const nextState = updateCreativeState(previousState, evaluation);
+      const stateSnapshotRow = stateToSnapshotRow(
+        nextState,
+        result.session.session_id,
+        critique.overall_summary?.slice(0, 500) ?? null
+      );
       const { error: stateError } = await supabase
         .from("creative_state_snapshot")
         .insert(stateSnapshotRow);

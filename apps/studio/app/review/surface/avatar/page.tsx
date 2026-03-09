@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AvatarProposalList } from "./avatar-proposal-list";
 
 /**
  * Avatar candidate review path.
@@ -14,9 +15,7 @@ export default function AvatarCandidateReviewPage() {
         <Link href="/review/surface">← Surface proposals</Link>
       </p>
       <section style={{ marginTop: "1rem" }}>
-        <p>
-          <em>Stub: list proposal_record where lane_type = surface and target_type = avatar_candidate.</em>
-        </p>
+        <AvatarProposalList />
       </section>
     </main>
   );

@@ -15,15 +15,11 @@ export default function SurfaceReviewPage() {
       <p>
         <Link href="/">← Studio</Link>
       </p>
-      <nav style={{ display: "flex", gap: "1rem", marginTop: "1rem" }}>
+      <nav style={{ display: "flex", gap: "1rem", marginTop: "1rem", flexWrap: "wrap" }}>
         <Link href="/review/surface/avatar">Avatar candidate review</Link>
         <Link href="/review/surface/habitat">Public habitat proposal review</Link>
+        <Link href="/review/surface/name">Name proposals</Link>
       </nav>
-      <section style={{ marginTop: "1rem" }}>
-        <p>
-          <em>Stub: queues will list proposal_record where lane_type = surface and target_type / proposal_state filter.</em>
-        </p>
-      </section>
     </main>
   );
 }

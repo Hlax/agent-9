@@ -1,0 +1,63 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+import { getSupabaseServer } from "@/lib/supabase-server";
+
+/**
+ * GET /api/proposals — list proposals. Query: lane_type, target_type.
+ * POST /api/proposals — create a proposal (Twin or Harvey). Body: lane_type, target_type, title, summary?, target_id?, preview_uri?, created_by?.
+ */
+export async function GET(request: Request) {
+  try {
+    const { data: { user } } = await (await createClient()).auth.getUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const supabase = getSupabaseServer();
+    if (!supabase) return NextResponse.json({ proposals: [] });
+    const { searchParams } = new URL(request.url);
+    const lane_type = searchParams.get("lane_type");
+    const target_type = searchParams.get("target_type");
+    let query = supabase.from("proposal_record").select("*").order("created_at", { ascending: false }).limit(50);
+    if (lane_type) query = query.eq("lane_type", lane_type);
+    if (target_type) query = query.eq("target_type", target_type);
+    const { data, error } = await query;
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ proposals: data ?? [] });
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const { data: { user } } = await (await createClient()).auth.getUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const supabase = getSupabaseServer();
+    if (!supabase) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
+    const body = await request.json().catch(() => ({}));
+    const lane_type = body?.lane_type ?? "surface";
+    const target_type = body?.target_type ?? "concept";
+    const title = typeof body?.title === "string" ? body.title.trim() : "";
+    const summary = typeof body?.summary === "string" ? body.summary : null;
+    const target_id = body?.target_id ?? null;
+    const preview_uri = body?.preview_uri ?? null;
+    const created_by = body?.created_by ?? (user?.email ?? "harvey");
+    if (!title) return NextResponse.json({ error: "title is required" }, { status: 400 });
+    const row = {
+      lane_type,
+      target_type,
+      target_id,
+      title,
+      summary,
+      proposal_state: "pending_review",
+      preview_uri,
+      review_note: null,
+      created_by,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    const { data, error } = await supabase.from("proposal_record").insert(row).select("proposal_record_id").single();
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ proposal_record_id: data?.proposal_record_id, ...row });
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
+  }
+}
