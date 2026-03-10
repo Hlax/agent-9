@@ -16,7 +16,12 @@ You have three Next.js apps:
 
 **Minimum for “Twin on my domain”:** Deploy **Studio** and **Public site**. Staging is optional.
 
-**Host:** Any platform that runs Node and can build Next.js (e.g. **Vercel**, Netlify, Railway). Vercel is the simplest for this repo (no config file yet; it auto-detects Next.js).
+**Domain plan (recommended):**
+- **Public site** → **root domain** (e.g. `yourdomain.com` or `www.yourdomain.com`) — the main public-facing site.
+- **Studio** → **subdomain** (e.g. `studio.yourdomain.com`) — Harvey UI and API.
+- **Habitat-staging** → **subdomain** (e.g. `staging.yourdomain.com`) — optional staging/preview.
+
+**Host:** Any platform that runs Node and can build Next.js (e.g. **Vercel**, Netlify, Railway). Vercel is the simplest for this repo.
 
 ---
 
@@ -58,10 +63,21 @@ You have three Next.js apps:
 
 ---
 
-## 4. Deploy Public site
+## 4. Deploy Public site and Habitat-staging
 
-1. **Same host or another:** Create a second project / app for `apps/public-site` (or use monorepo support and deploy each app from the same repo).
-2. **Build:** Root = repo root, build = `pnpm --filter public-site build` (or Root = `apps/public-site`, build = `pnpm install && pnpm build`).
+**Env vars (these two apps do not need Studio’s Supabase/OpenAI/CRON):**
+
+| App | Root Directory | Env variable (required) |
+|-----|----------------|-------------------------|
+| **Habitat-staging** | `apps/habitat-staging` | `NEXT_PUBLIC_STUDIO_URL` = Studio URL (e.g. `https://your-studio.vercel.app`) |
+| **Public site** | `apps/public-site` | `NEXT_PUBLIC_STUDIO_URL` = Studio URL (same) |
+
+Each app has a `vercel.json` that runs install/build from repo root (monorepo). Create one Vercel project per app, set Root Directory, add the env var, deploy.
+
+**Public site (detailed):**
+
+1. **Same host or another:** Create a second project for `apps/public-site`.
+2. **Build:** Root = `apps/public-site`. Install/build use repo root via `vercel.json`.
 3. **Environment variable:**
 
    | Variable | Value |
@@ -70,7 +86,7 @@ You have three Next.js apps:
 
    Public site calls Studio’s `/api/public/identity`, `/api/public/artifacts`, `/api/public/habitat-content` from the browser, so this must be the **public** Studio URL (your domain or the host’s default).
 
-4. **Deploy**, then add your **public** domain (e.g. `yourdomain.com` or `www.yourdomain.com` or `twin.yourdomain.com`) and set DNS (CNAME or A) as the host instructs.
+4. **Deploy**, then add your **root domain** (e.g. `yourdomain.com` or `www.yourdomain.com`) in that project’s **Settings → Domains**. Set DNS (CNAME or A) as Vercel instructs. This is your main public site.
 
 ---
 
@@ -106,11 +122,12 @@ Critical for avatar + habitat: **20250310000004_habitat_v2_payload.sql** (and an
 
 ## 7. Checklist
 
-- [ ] Studio deployed and reachable at `https://studio.yourdomain.com` (or your chosen hostname).
+- [ ] Studio deployed and reachable at `https://studio.yourdomain.com` (subdomain).
 - [ ] Studio env: `APP_URL`, Supabase, OpenAI, `CRON_SECRET` set.
-- [ ] Public site deployed and reachable at `https://yourdomain.com` (or your chosen hostname).
+- [ ] Public site deployed and reachable at `https://yourdomain.com` or `https://www.yourdomain.com` (root domain).
 - [ ] Public site env: `NEXT_PUBLIC_STUDIO_URL` = Studio URL.
-- [ ] DNS for both domains pointing at the host; HTTPS working.
+- [ ] (Optional) Habitat-staging at `https://staging.yourdomain.com` (subdomain).
+- [ ] DNS: root domain → public-site project; subdomains `studio` and `staging` → Studio and staging projects; HTTPS working.
 - [ ] Migrations applied (including 20250310000004).
 - [ ] Supabase Auth Site URL and redirect URLs include your Studio domain.
 - [ ] Cron configured (optional) and `CRON_SECRET` matches.

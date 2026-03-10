@@ -190,7 +190,7 @@ function BuildStatePanel({ state }: { state: BuildState }) {
         <dt style={{ fontWeight: 600 }}>App / product</dt>
         <dd style={{ margin: 0 }}>
           {state.app_version ?? "n/a"}
-          {state.product_version ? ` · ${state.product_version}` : ""}
+          {state.product_version ? ` - ${state.product_version}` : ""}
         </dd>
         <dt style={{ fontWeight: 600 }}>Staging vs main</dt>
         <dd style={{ margin: 0 }}>
