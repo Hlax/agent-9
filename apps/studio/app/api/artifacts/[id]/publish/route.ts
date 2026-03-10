@@ -42,7 +42,7 @@ export async function POST(
 
     const { data: artifact, error: fetchError } = await supabase
       .from("artifact")
-      .select("current_approval_state")
+      .select("current_approval_state, target_surface, artifact_role")
       .eq("artifact_id", artifactId)
       .single();
 
@@ -65,10 +65,10 @@ export async function POST(
 
     const { data: proposals } = await supabase
       .from("proposal_record")
-      .select("proposal_state")
+      .select("proposal_state, proposal_role, target_surface")
       .eq("artifact_id", artifactId);
     const list = Array.isArray(proposals) ? proposals : [];
-    if (!passesStagingGate(list)) {
+    if (!passesStagingGate(list, { target_surface: artifact.target_surface, artifact_role: artifact.artifact_role })) {
       return NextResponse.json(
         {
           error:

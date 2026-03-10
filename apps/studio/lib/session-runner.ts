@@ -245,11 +245,10 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
     }
   }
   const derivedPreferMedium = derivePreferredMedium(previousState, preferMedium, isCron);
-  const effectiveMode = derivedPreferMedium === "concept" ? "reflect" : mode;
 
   const result = await runSessionPipeline(
     {
-      mode: effectiveMode,
+      mode,
       selectedDrive,
       projectId: selectedProjectId ?? undefined,
       ideaThreadId: selectedThreadId ?? undefined,
