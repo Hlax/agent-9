@@ -63,6 +63,8 @@ export async function GET(request: Request) {
   const url = base.startsWith("http") ? base : `https://${base}`;
   const runUrl = `${url.replace(/\/$/, "")}/api/session/run`;
 
+  // Empty body = no preferMedium; session/run will use derivePreferredMedium (creative state).
+  // CRON_SECRET must be set in Vercel env so session/run accepts this server-to-server call.
   const res = await fetch(runUrl, {
     method: "POST",
     headers: {

@@ -3,14 +3,14 @@
 import Link from "next/link";
 import { useState } from "react";
 
-type PreferredMedium = "writing" | "concept" | "image";
+type PreferredMedium = "auto" | "writing" | "concept" | "image";
 
 export default function SessionPage() {
   const [status, setStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [message, setMessage] = useState<string>("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [lastMedium, setLastMedium] = useState<{ requested?: string; generated?: string } | null>(null);
-  const [preferMedium, setPreferMedium] = useState<PreferredMedium>("writing");
+  const [preferMedium, setPreferMedium] = useState<PreferredMedium>("auto");
   const [promptContext, setPromptContext] = useState<string>("");
 
   async function startSession() {
@@ -19,13 +19,16 @@ export default function SessionPage() {
     setSessionId(null);
     setLastMedium(null);
     try {
+      const body: { preferMedium?: "writing" | "concept" | "image"; promptContext?: string } = {
+        promptContext: promptContext.trim() || undefined,
+      };
+      if (preferMedium !== "auto") {
+        body.preferMedium = preferMedium;
+      }
       const res = await fetch("/api/session/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          preferMedium,
-          promptContext: promptContext.trim() || undefined,
-        }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Session failed");
@@ -55,6 +58,7 @@ export default function SessionPage() {
             onChange={(e) => setPreferMedium(e.target.value as PreferredMedium)}
             disabled={status === "running"}
           >
+            <option value="auto">Auto (agent picks from creative state)</option>
             <option value="writing">Writing (text)</option>
             <option value="concept">Concept (reflect)</option>
             <option value="image">Image (DALL·E)</option>
