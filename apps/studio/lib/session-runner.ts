@@ -373,28 +373,29 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
             );
             const newest = sorted[0];
             const older = sorted.slice(1);
-
-            await supabase
-              .from("proposal_record")
-              .update({
-                title: artifact.title,
-                summary,
-                habitat_payload_json: hasPayload ? (validated.data as object) : null,
-                updated_at: new Date().toISOString(),
-              })
-              .eq("proposal_record_id", newest.proposal_record_id);
-
-            if (older.length > 0) {
+            if (newest) {
               await supabase
                 .from("proposal_record")
                 .update({
-                  proposal_state: "archived",
+                  title: artifact.title,
+                  summary,
+                  habitat_payload_json: hasPayload ? (validated.data as object) : null,
                   updated_at: new Date().toISOString(),
                 })
-                .in(
-                  "proposal_record_id",
-                  older.map((o) => o.proposal_record_id)
-                );
+                .eq("proposal_record_id", newest.proposal_record_id);
+
+              if (older.length > 0) {
+                await supabase
+                  .from("proposal_record")
+                  .update({
+                    proposal_state: "archived",
+                    updated_at: new Date().toISOString(),
+                  })
+                  .in(
+                    "proposal_record_id",
+                    older.map((o) => o.proposal_record_id)
+                  );
+              }
             }
           } else {
             const proposalRow = {
