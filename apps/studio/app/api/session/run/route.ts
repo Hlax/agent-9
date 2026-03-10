@@ -11,9 +11,18 @@ const CRON_SECRET_HEADER = "x-cron-secret";
 
 export async function POST(request: Request) {
   try {
-    let createdBy: string = "harvey";
     const cronSecret = request.headers.get(CRON_SECRET_HEADER);
+    const hasProtectionBypassHeader = !!request.headers.get("x-vercel-protection-bypass");
     const isCron = !!process.env.CRON_SECRET && cronSecret === process.env.CRON_SECRET;
+
+    console.log("[session/run] entry", {
+      isCron,
+      hasCronSecretHeader: !!cronSecret,
+      hasProtectionBypassHeader,
+      hasAutomationBypassEnv: !!process.env.VERCEL_AUTOMATION_BYPASS_SECRET,
+    });
+
+    let createdBy: string = "harvey";
 
     if (!isCron) {
       const authClient = await createClient().catch(() => null);

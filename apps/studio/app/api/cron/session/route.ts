@@ -25,6 +25,7 @@ export async function GET(request: Request) {
 
   const cronSecret = request.headers.get(CRON_SECRET_HEADER);
   const isVercelCron = request.headers.get("x-vercel-cron") === "1";
+  const hasProtectionBypassHeader = !!request.headers.get("x-vercel-protection-bypass");
   const hasEnvSecret = !!process.env.CRON_SECRET;
   const hasHeaderSecret = !!cronSecret;
 
@@ -32,6 +33,8 @@ export async function GET(request: Request) {
     isVercelCron,
     hasEnvSecret,
     hasHeaderSecret,
+    hasProtectionBypassHeader,
+    hasAutomationBypassEnv: !!process.env.VERCEL_AUTOMATION_BYPASS_SECRET,
   });
 
   if (hasEnvSecret && !isVercelCron && cronSecret !== process.env.CRON_SECRET) {
