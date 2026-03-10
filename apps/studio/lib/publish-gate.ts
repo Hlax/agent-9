@@ -28,10 +28,9 @@ export interface ArtifactMeta {
  * through the staging gate before publication.
  *
  * Proposal-intent signals (any one is sufficient):
- *   - linked proposal_record rows exist
+ *   - linked proposal_record rows exist (any proposal makes the artifact proposal-intent)
  *   - artifact target_surface is set (non-null)
- *   - any linked proposal has a deployment-intent proposal_role or target_surface
- *   - artifact_role indicates a build/publication intent
+ *   - artifact_role is in the PROPOSAL_INTENT_ROLES list
  */
 export function isProposalIntent(proposals: ProposalMeta[], artifact: ArtifactMeta): boolean {
   if (proposals.length > 0) return true;
