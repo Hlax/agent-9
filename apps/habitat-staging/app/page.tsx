@@ -45,7 +45,8 @@ async function getStagingProposals(): Promise<StagingFetchResult> {
     const res = await fetch(url, { next: { revalidate: 30 } });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      return { proposals: [], error: `Studio returned ${res.status}${text ? `: ${text.slice(0, 80)}` : "" } };
+      const errMsg = text ? "Studio returned " + res.status + ": " + text.slice(0, 80) : "Studio returned " + res.status;
+      return { proposals: [], error: errMsg };
     }
     const data = await res.json();
     const list = Array.isArray(data.proposals) ? data.proposals : [];
@@ -209,7 +210,7 @@ function ChangeProposalsSection({ proposals }: { proposals: ChangeProposal[] }) 
     <section style={{ border: "1px solid #ddd", borderRadius: 8, padding: "0.9rem 1rem" }}>
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "0.4rem" }}>
         <h2 style={{ fontSize: "1.1rem", margin: 0 }}>Change proposals</h2>
-        <span style={{ fontSize: "0.8rem", color: "#666" }}>Read-only in staging · approve in Studio</span>
+        <span style={{ fontSize: "0.8rem", color: "#666" }}>Read-only in staging - approve in Studio</span>
       </header>
       <p style={{ margin: 0, fontSize: "0.9rem", color: "#555" }}>
         Twin and Harvey proposals for Studio, Staging Habitat, and Public Habitat are previewed here. Approval, publication, and deployment still flow through Studio and your build pipeline.
@@ -230,7 +231,7 @@ function ChangeProposalsSection({ proposals }: { proposals: ChangeProposal[] }) 
                 <strong style={{ fontSize: "0.95rem" }}>{p.title}</strong>
                 <div style={{ fontSize: "0.8rem", color: "#666", marginTop: "0.1rem" }}>
                   <span style={{ textTransform: "capitalize" }}>{p.target_surface.replace("_", " ")}</span>
-                  {" · "}
+                  {" - "}
                   <span>{p.proposal_type.replace("_", " ")}</span>
                 </div>
               </div>
@@ -242,7 +243,7 @@ function ChangeProposalsSection({ proposals }: { proposals: ChangeProposal[] }) 
               {p.idea_thread_id && <span>Idea thread: {p.idea_thread_id}</span>}
               {p.preview_url && <span>Preview: {p.preview_url}</span>}
               <span>
-                Created: {new Date(p.created_at).toLocaleDateString()} · Updated:{" "}
+                Created: {new Date(p.created_at).toLocaleDateString()} - Updated:{" "}
                 {new Date(p.updated_at).toLocaleDateString()}
               </span>
             </div>

@@ -72,13 +72,16 @@ function isHabitatBlock(b: unknown): b is HabitatBlock {
 
 async function getPublishedArtifacts(): Promise<FetchResult> {
   const base = process.env.NEXT_PUBLIC_STUDIO_URL ?? "";
-  const url = base ? `${base.replace(/\/$/, "")}/api/public/artifacts` : "";
-  if (!url) return { artifacts: [] };
+  const cleaned = base.replace(/\/$/, "");
+  if (!cleaned) return { artifacts: [] };
+  const url = cleaned + "/api/public/artifacts";
   try {
     const res = await fetch(url, { next: { revalidate: 60 } });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      return { artifacts: [], error: `Studio returned ${res.status}${text ? `: ${text.slice(0, 80)}` : "" } };
+      const prefix = "Studio returned " + res.status;
+      const errMsg = text ? prefix + ": " + text.slice(0, 80) : prefix;
+      return { artifacts: [], error: errMsg };
     }
     const data = await res.json();
     const list = Array.isArray(data.artifacts) ? data.artifacts : [];
@@ -91,8 +94,9 @@ async function getPublishedArtifacts(): Promise<FetchResult> {
 
 async function getPublicIdentity(): Promise<PublicIdentity | null> {
   const base = process.env.NEXT_PUBLIC_STUDIO_URL ?? "";
-  const url = base ? `${base.replace(/\/$/, "")}/api/public/identity` : "";
-  if (!url) return null;
+  const cleaned = base.replace(/\/$/, "");
+  if (!cleaned) return null;
+  const url = cleaned + "/api/public/identity";
   try {
     const res = await fetch(url, { next: { revalidate: 60 } });
     if (!res.ok) return null;
@@ -111,8 +115,9 @@ async function getPublicIdentity(): Promise<PublicIdentity | null> {
 
 async function getHabitatContent(page: string): Promise<HabitatContentResult> {
   const base = process.env.NEXT_PUBLIC_STUDIO_URL ?? "";
-  const url = base ? `${base.replace(/\/$/, "")}/api/public/habitat-content?page=${encodeURIComponent(page)}` : "";
-  if (!url) return { slug: "home", title: null, body: null, payload: null };
+  const cleaned = base.replace(/\/$/, "");
+  if (!cleaned) return { slug: "home", title: null, body: null, payload: null };
+  const url = cleaned + "/api/public/habitat-content?page=" + encodeURIComponent(page);
   try {
     const res = await fetch(url, { next: { revalidate: 60 } });
     if (!res.ok) return { slug: page, title: null, body: null, payload: null };
@@ -178,7 +183,7 @@ function DefaultLayout({
                 />
               )}
               <p style={{ margin: "0.25rem 0 0", fontSize: "0.85rem", color: "#888" }}>
-                {a.medium} · {new Date(a.created_at).toLocaleDateString()}
+                {a.medium} - {new Date(a.created_at).toLocaleDateString()}
               </p>
             </li>
           ))}
