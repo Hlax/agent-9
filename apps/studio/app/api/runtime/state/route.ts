@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
+import { getRuntimeConfig } from "@/lib/runtime-config";
 
 /**
- * GET /api/runtime/state — latest creative_state_snapshot plus lightweight backlog/metabolism view.
+ * GET /api/runtime/state — latest creative_state_snapshot, backlog, runtime config, and introspection fields.
  */
 export async function GET() {
   const supabase = getSupabaseServer();
@@ -10,7 +11,7 @@ export async function GET() {
     return NextResponse.json({ snapshot: null, backlog: null, return_candidates: 0 });
   }
 
-  const [stateRes, artifactBacklogRes, proposalBacklogRes, runtimeConfigRes, archiveCountRes] =
+  const [stateRes, artifactBacklogRes, proposalBacklogRes, archiveCountRes, runtimeConfig, latestSessionRes] =
     await Promise.all([
       supabase
         .from("creative_state_snapshot")
@@ -27,13 +28,14 @@ export async function GET() {
           count: "exact",
           head: false,
         }),
+      supabase.from("archive_entry").select("archive_entry_id", { count: "exact", head: true }),
+      getRuntimeConfig(supabase),
       supabase
-        .from("runtime_config")
-        .select("*")
+        .from("creative_session")
+        .select("trace")
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle(),
-      supabase.from("archive_entry").select("archive_entry_id", { count: "exact", head: true }),
     ]);
 
   const { data: snapshot, error: stateError } = stateRes;
@@ -60,15 +62,39 @@ export async function GET() {
       {} as Record<string, number>
     ) ?? {};
 
-  const { data: runtimeConfig } = runtimeConfigRes;
   const returnCandidatesCount = archiveCountRes.count ?? 0;
+  const latestTrace = (latestSessionRes.data as { trace?: Record<string, unknown> } | null)?.trace ?? null;
+  const active_project = (latestTrace && typeof latestTrace === "object" && "project_name" in latestTrace)
+    ? (latestTrace.project_name as string)
+    : null;
+  const active_thread = (latestTrace && typeof latestTrace === "object" && "thread_name" in latestTrace)
+    ? (latestTrace.thread_name as string)
+    : null;
+
+  const creative_state =
+    snapshot && typeof snapshot === "object" && "creative_tension" in snapshot
+      ? {
+          tension: (snapshot as Record<string, unknown>).creative_tension ?? null,
+          reflection_need: (snapshot as Record<string, unknown>).reflection_need ?? null,
+          momentum: (snapshot as Record<string, unknown>).recent_exploration_rate ?? null,
+        }
+      : null;
+
+  const runtime = {
+    mode: runtimeConfig.mode,
+    always_on: runtimeConfig.always_on,
+    tokens_used_today: runtimeConfig.tokens_used_today,
+  };
 
   if (stateError || !snapshot) {
     return NextResponse.json({
       snapshot: null,
       backlog: { artifacts: artifactBacklog, proposals: proposalBacklog },
-      runtime: runtimeConfig ?? null,
+      runtime,
       return_candidates: returnCandidatesCount,
+      creative_state,
+      active_project,
+      active_thread,
     });
   }
 
@@ -78,8 +104,11 @@ export async function GET() {
       artifacts: artifactBacklog,
       proposals: proposalBacklog,
     },
-    runtime: runtimeConfig ?? null,
+    runtime,
     return_candidates: returnCandidatesCount,
+    creative_state,
+    active_project,
+    active_thread,
   });
 }
 

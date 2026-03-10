@@ -163,3 +163,33 @@ export async function getProjectThreadIdeaContext(
   if (parts.length === 0) return null;
   return "Current focus:\n" + parts.join("\n");
 }
+
+/**
+ * Fetch project/thread/idea labels for session trace (names and idea summary).
+ */
+export async function getProjectThreadIdeaTraceLabels(
+  supabase: SupabaseClient,
+  projectId: string | null,
+  ideaThreadId: string | null,
+  ideaId: string | null
+): Promise<{ project_name: string | null; thread_name: string | null; idea_summary: string | null }> {
+  const [projectRes, threadRes, ideaRes] = await Promise.all([
+    projectId
+      ? supabase.from("project").select("title").eq("project_id", projectId).maybeSingle()
+      : Promise.resolve({ data: null }),
+    ideaThreadId
+      ? supabase.from("idea_thread").select("title").eq("idea_thread_id", ideaThreadId).maybeSingle()
+      : Promise.resolve({ data: null }),
+    ideaId
+      ? supabase.from("idea").select("title, summary").eq("idea_id", ideaId).maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
+  const project = projectRes.data as { title?: string } | null;
+  const thread = threadRes.data as { title?: string } | null;
+  const idea = ideaRes.data as { title?: string; summary?: string } | null;
+  return {
+    project_name: project?.title ?? null,
+    thread_name: thread?.title ?? null,
+    idea_summary: idea?.summary ?? idea?.title ?? null,
+  };
+}

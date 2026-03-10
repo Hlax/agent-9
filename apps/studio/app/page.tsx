@@ -41,6 +41,7 @@ export default async function StudioHome() {
         <Link href="/review/artifacts">📋 Artifacts</Link>
         <Link href="/review/surface">🎭 Surface</Link>
         <Link href="/review/system">⚙️ System</Link>
+        <Link href="/runtime">🔍 Runtime</Link>
         <SignOut />
       </nav>
       <div style={{ marginTop: "1.5rem", maxWidth: 560 }}>

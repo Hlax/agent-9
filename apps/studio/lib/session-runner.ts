@@ -22,6 +22,7 @@ import {
 import {
   selectProjectAndThread,
   getProjectThreadIdeaContext,
+  getProjectThreadIdeaTraceLabels,
 } from "@/lib/project-thread-selection";
 import {
   getMaxArtifactsPerSession,
@@ -30,7 +31,7 @@ import {
   isOverTokenLimit,
 } from "@/lib/stop-limits";
 import { detectRepetition } from "@/lib/repetition-detection";
-import { addTokenUsage } from "@/lib/runtime-config";
+import { addTokenUsage, getRuntimeConfig } from "@/lib/runtime-config";
 
 /** Create bucket "artifacts" in Supabase Dashboard → Storage if missing. */
 const ARTIFACTS_BUCKET = "artifacts";
@@ -161,6 +162,7 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
   let selectedProjectId: string | null = null;
   let selectedThreadId: string | null = null;
   let selectedIdeaId: string | null = null;
+  let selectionSource: "archive" | "project_thread" | null = null;
 
   if (supabase) {
     // For return sessions, prefer resurfacing from archive entries when available.
@@ -200,6 +202,7 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
           selectedProjectId = (chosen.project_id as string | null) ?? null;
           selectedThreadId = (chosen.idea_thread_id as string | null) ?? null;
           selectedIdeaId = (chosen.idea_id as string | null) ?? null;
+          selectionSource = "archive";
           console.log("[session] selection: return_from_archive", {
             archive_project: selectedProjectId,
             archive_thread: selectedThreadId,
@@ -215,6 +218,7 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       selectedProjectId = selection.projectId;
       selectedThreadId = selection.ideaThreadId;
       selectedIdeaId = selection.ideaId;
+      selectionSource = "project_thread";
       if (selectedProjectId || selectedThreadId || selectedIdeaId) {
         console.log("[session] selection: project_thread_idea", {
           project: selectedProjectId,
@@ -307,6 +311,35 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
   });
 
   if (supabase) {
+    let traceProposalId: string | null = null;
+    let traceProposalType: string | null = null;
+    const decisionSummary: {
+      project_reason: string | null;
+      thread_reason: string | null;
+      idea_reason: string | null;
+      rejected_alternatives: string[];
+      next_action: string | null;
+      confidence: number;
+    } = {
+      project_reason:
+        selectionSource === "archive"
+          ? "Return session: selected project from archive entries weighted by recurrence, pull, and recency."
+          : "Selected active project via project/thread selection (weighted by thread recurrence and creative pull).",
+      thread_reason:
+        selectionSource === "archive"
+          ? "Thread comes from chosen archive entry with unresolved or paused work."
+          : "Selected active thread for the project, weighted by recurrence_score and creative_pull.",
+      idea_reason: selectedIdeaId
+        ? "Selected idea linked to the chosen thread, biased toward higher recurrence and pull when available."
+        : "No specific idea was selected; session used project/thread and identity/context only.",
+      rejected_alternatives:
+        selectionSource === "archive"
+          ? ["Other archive entries had lower combined recurrence, pull, or were older."]
+          : ["Other active threads or ideas scored lower on recurrence and creative pull."],
+      next_action: null,
+      confidence: 0.7,
+    };
+
     const sessionRow = {
       session_id: result.session.session_id,
       project_id: selectedProjectId ?? result.session.project_id,
@@ -442,6 +475,10 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
             cap,
             role: "habitat_layout",
           });
+          if (!decisionSummary.next_action) {
+            decisionSummary.next_action =
+              "Focus on reviewing existing habitat layout proposals before creating new ones (backlog at cap).";
+          }
         } else {
           const minimalPayload = buildMinimalHabitatPayloadFromConcept(artifact.title, artifact.summary);
           const validated = validateHabitatPayload(minimalPayload);
@@ -455,6 +492,8 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
             const newest = sorted[0];
             const older = sorted.slice(1);
             if (newest) {
+              traceProposalId = newest.proposal_record_id as string;
+              traceProposalType = "surface";
               await supabase
                 .from("proposal_record")
                 .update({
@@ -497,7 +536,18 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
             };
-            await supabase.from("proposal_record").insert(proposalRow);
+            const { data: insertedHabitat } = await supabase
+              .from("proposal_record")
+              .insert(proposalRow)
+              .select("proposal_record_id")
+              .single();
+            if (insertedHabitat?.proposal_record_id) {
+              traceProposalId = insertedHabitat.proposal_record_id as string;
+              traceProposalType = "surface";
+              decisionSummary.next_action =
+                decisionSummary.next_action ??
+                "Create or refine a habitat layout proposal for the staging habitat from this concept.";
+            }
           }
         }
       }
@@ -530,22 +580,32 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
           });
         } else {
           const avatarSummary = capSummaryTo200Words(artifact.summary ?? artifact.title ?? "Proposed as public avatar.");
-          await supabase.from("proposal_record").insert({
-            lane_type: "surface",
-            target_type: "avatar_candidate",
-            target_id: artifact.artifact_id,
-            artifact_id: artifact.artifact_id,
-            title: artifact.title ?? "Avatar candidate",
-            summary: avatarSummary || null,
-            proposal_state: "pending_review",
-            target_surface: null,
-            proposal_type: "avatar",
-            preview_uri: artifact.preview_uri ?? null,
-            review_note: null,
-            created_by: createdBy,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          });
+          const { data: insertedAvatar } = await supabase
+            .from("proposal_record")
+            .insert({
+              lane_type: "surface",
+              target_type: "avatar_candidate",
+              target_id: artifact.artifact_id,
+              artifact_id: artifact.artifact_id,
+              title: artifact.title ?? "Avatar candidate",
+              summary: avatarSummary || null,
+              proposal_state: "pending_review",
+              target_surface: null,
+              proposal_type: "avatar",
+              preview_uri: artifact.preview_uri ?? null,
+              review_note: null,
+              created_by: createdBy,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .select("proposal_record_id")
+            .single();
+          if (insertedAvatar?.proposal_record_id) {
+            traceProposalId = insertedAvatar.proposal_record_id as string;
+            traceProposalType = "avatar";
+            decisionSummary.next_action =
+              decisionSummary.next_action ?? "Propose a new avatar candidate for review based on this image.";
+          }
         }
       }
     }
@@ -620,6 +680,52 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
     }
     const tokensUsedForRecord = "tokensUsed" in result && typeof result.tokensUsed === "number" ? result.tokensUsed : 0;
     if (tokensUsedForRecord > 0) await addTokenUsage(supabase, tokensUsedForRecord);
+
+    if (!decisionSummary.next_action) {
+      if (mode === "return") {
+        decisionSummary.next_action =
+          "Continue exploring or resolving this archived thread or idea in a follow-up session.";
+      } else if (artifact.medium === "concept") {
+        decisionSummary.next_action =
+          "Review this concept and decide whether to adjust or create proposals for staging or publication.";
+      } else if (artifact.medium === "image") {
+        decisionSummary.next_action =
+          "Review this image for potential avatar or surface use, or archive it if it does not fit current direction.";
+      } else {
+        decisionSummary.next_action =
+          "Review this artifact for approval, archiving, or follow-up work depending on evaluation and critique.";
+      }
+    }
+
+    // Session trace: full decision chain for runtime introspection.
+    const runtimeConfig = await getRuntimeConfig(supabase);
+    const traceLabels = await getProjectThreadIdeaTraceLabels(
+      supabase,
+      selectedProjectId,
+      selectedThreadId,
+      selectedIdeaId
+    );
+    const trace = {
+      mode: runtimeConfig.mode,
+      drive: selectedDrive ?? null,
+      project_id: selectedProjectId ?? null,
+      project_name: traceLabels.project_name ?? null,
+      idea_thread_id: selectedThreadId ?? null,
+      thread_name: traceLabels.thread_name ?? null,
+      idea_id: selectedIdeaId ?? null,
+      idea_summary: traceLabels.idea_summary ?? null,
+      artifact_id: artifact.artifact_id,
+      proposal_id: traceProposalId,
+      proposal_type: traceProposalType,
+      tokens_used: tokensUsed ?? null,
+      generation_model: generationRunRow.model_name,
+      start_time: result.session.started_at,
+      end_time: result.session.ended_at ?? new Date().toISOString(),
+    };
+    await supabase
+      .from("creative_session")
+      .update({ trace, decision_summary: decisionSummary, updated_at: new Date().toISOString() })
+      .eq("session_id", result.session.session_id);
   }
 
   const artifactMedium: PreferredMedium | "other" | null =
