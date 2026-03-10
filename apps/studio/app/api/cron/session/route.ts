@@ -1,7 +1,8 @@
 /**
  * GET /api/cron/session — scheduler entrypoint.
- * Call from cron (e.g. every 1–5 min) with header x-cron-secret.
- * If always_on is enabled and interval elapsed, triggers POST /api/session/run.
+ * Intended to be called by Vercel Cron (Authorization: Bearer ${CRON_SECRET})
+ * and optionally by manual callers with header x-cron-secret.
+ * If always_on is enabled and interval elapsed, triggers a session run.
  */
 import { NextResponse } from "next/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
@@ -23,22 +24,32 @@ export async function GET(request: Request) {
   // always_on flag, mode, and token/interval guards. Manual callers
   // can still pass x-cron-secret; it is forwarded to /api/session/run.
 
-  const cronSecret = request.headers.get(CRON_SECRET_HEADER);
   const isVercelCron = request.headers.get("x-vercel-cron") === "1";
-  const hasProtectionBypassHeader = !!request.headers.get("x-vercel-protection-bypass");
+  const authHeader = request.headers.get("authorization");
+  const manualSecret = request.headers.get(CRON_SECRET_HEADER);
+
   const hasEnvSecret = !!process.env.CRON_SECRET;
-  const hasHeaderSecret = !!cronSecret;
+  const validVercelCron = hasEnvSecret && authHeader === `Bearer ${process.env.CRON_SECRET}`;
+  const validManualCall = hasEnvSecret && manualSecret === process.env.CRON_SECRET;
+  const hasProtectionBypassHeader = !!request.headers.get("x-vercel-protection-bypass");
 
   console.log("[cron/session] auth", {
     isVercelCron,
     hasEnvSecret,
-    hasHeaderSecret,
+    hasAuthorization: !!authHeader,
+    hasManualSecretHeader: !!manualSecret,
+    validVercelCron,
+    validManualCall,
     hasProtectionBypassHeader,
     hasAutomationBypassEnv: !!process.env.VERCEL_AUTOMATION_BYPASS_SECRET,
   });
 
-  if (hasEnvSecret && !isVercelCron && cronSecret !== process.env.CRON_SECRET) {
-    console.log("[cron/session] unauthorized: missing or invalid cron secret");
+  if (hasEnvSecret && !validVercelCron && !validManualCall) {
+    console.log("[cron/session] unauthorized", {
+      isVercelCron,
+      hasAuthorization: !!authHeader,
+      hasManualSecretHeader: !!manualSecret,
+    });
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
