@@ -1,4 +1,10 @@
 {
   "installCommand": "cd ../.. && pnpm install",
-  "buildCommand": "cd ../.. && pnpm --filter studio... build"
+  "buildCommand": "cd ../.. && pnpm --filter studio... build",
+  "crons": [
+    {
+      "path": "/api/cron/session",
+      "schedule": "*/5 * * * *"
+    }
+  ]
 }
