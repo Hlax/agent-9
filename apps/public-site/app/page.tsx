@@ -297,26 +297,28 @@ function HabitatBlocks({
   return <>{items}</>;
 }
 
-export default async function PublicHome() {
-  const [identity, { artifacts, error }, habitat] = await Promise.all([
-    getPublicIdentity(),
-    getPublishedArtifacts(),
-    getHabitatContent("home"),
-  ]);
-
-  const avatarArtifactId = identity?.avatar?.artifact_id ?? null;
-  const works = avatarArtifactId ? artifacts.filter((a) => a.artifact_id !== avatarArtifactId) : artifacts;
-  const artifactsMap = new Map(artifacts.map((a) => [a.artifact_id, a]));
-
-  const usePayload = habitat.payload && habitat.payload.blocks && habitat.payload.blocks.length > 0;
-
+export default function PublicHome() {
   return (
-    <main style={{ minHeight: "60vh", maxWidth: 720, margin: "0 auto", padding: "2rem 1rem" }}>
-      {usePayload ? (
-        <HabitatBlocks blocks={habitat.payload!.blocks} artifactsMap={artifactsMap} identity={identity} />
-      ) : (
-        <DefaultLayout identity={identity} works={works} error={error} />
-      )}
+    <main
+      style={{
+        minHeight: "60vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "2rem 1rem",
+      }}
+    >
+      <h1
+        style={{
+          fontFamily: "\"Futura\", system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+          fontSize: "3.5rem",
+          fontWeight: 700,
+          letterSpacing: "0.05em",
+          textTransform: "uppercase",
+        }}
+      >
+        Hello Twin
+      </h1>
     </main>
   );
 }
