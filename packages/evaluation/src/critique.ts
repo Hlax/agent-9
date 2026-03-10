@@ -68,6 +68,7 @@ export async function runCritique(
   const userContent = `Artifact title: ${input.title ?? "Untitled"}\nSummary: ${input.summary ?? "—"}\nContent:\n${content.slice(0, 6000)}`;
 
   const model = process.env.OPENAI_MODEL_CRITIQUE ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+  const isNewStyleModel = /gpt-4\.1|o1-|o3-|o4-|gpt-5/i.test(model);
   const completion = await client.chat.completions.create({
     model,
     messages: [
@@ -75,7 +76,7 @@ export async function runCritique(
       { role: "user", content: userContent },
     ],
     response_format: { type: "json_object" },
-    temperature: 0.3,
+    ...(isNewStyleModel ? {} : { temperature: 0.3 }),
   });
 
   const raw = completion.choices[0]?.message?.content?.trim();

@@ -43,8 +43,7 @@ async function generateImagePromptFromSeed(
         content: `From this identity and source context, write one DALL-E image prompt that could only come from this Twin.\n\nContext:\n${sourceContext.slice(0, 1500)}`,
       },
     ],
-    ...(isNewStyleModel ? {} : { max_tokens: 150 }),
-    temperature: 0.8,
+    ...(isNewStyleModel ? {} : { max_tokens: 150, temperature: 0.8 }),
   });
   const text = completion.choices[0]?.message?.content?.trim();
   return text && text.length > 0 ? text : "A single evocative image that explores identity or creative expression.";

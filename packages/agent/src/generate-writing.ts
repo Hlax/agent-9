@@ -79,6 +79,7 @@ export async function generateWriting(
   const model = isConcept
     ? (process.env.OPENAI_MODEL_CONCEPT ?? process.env.OPENAI_MODEL_GENERATION ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini")
     : (process.env.OPENAI_MODEL_GENERATION ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini");
+  const isNewStyleModel = /gpt-4\.1|o1-|o3-|o4-|gpt-5/i.test(model);
   const completion = await client.chat.completions.create({
     model,
     messages: [
@@ -86,7 +87,7 @@ export async function generateWriting(
       { role: "user", content: userPrompt },
     ],
     response_format: { type: "json_object" },
-    temperature: 0.8,
+    ...(isNewStyleModel ? {} : { temperature: 0.8 }),
   });
 
   const raw = completion.choices[0]?.message?.content?.trim();

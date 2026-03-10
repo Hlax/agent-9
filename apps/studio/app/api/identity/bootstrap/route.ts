@@ -81,6 +81,7 @@ export async function POST() {
     const client = new OpenAI({ apiKey });
     const model = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
 
+    const isNewStyleModel = /gpt-4\.1|o1-|o3-|o4-|gpt-5/i.test(model);
     const completion = await client.chat.completions.create({
       model,
       messages: [
@@ -94,7 +95,7 @@ export async function POST() {
         },
       ],
       response_format: { type: "json_object" },
-      temperature: 0.5,
+      ...(isNewStyleModel ? {} : { temperature: 0.5 }),
     });
 
     const raw = completion.choices[0]?.message?.content?.trim();
