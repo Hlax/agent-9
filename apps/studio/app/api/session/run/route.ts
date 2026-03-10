@@ -130,9 +130,9 @@ export async function POST(request: Request) {
     const mode = computeSessionMode(previousState);
     const driveWeights = computeDriveWeights(previousState);
     const selectedDrive = selectDrive(driveWeights);
-    const { projectId: selectedProjectId } = supabase
+    const { projectId: selectedProjectId, ideaThreadId: selectedThreadId } = supabase
       ? await selectProjectAndThread(supabase)
-      : { projectId: null };
+      : { projectId: null, ideaThreadId: null };
     const brainContext = await getBrainContext(supabase);
     const workingContextString = buildWorkingContextString(brainContext);
     const derivedPreferMedium = derivePreferredMedium(previousState, preferMedium, isCron);
@@ -203,7 +203,7 @@ export async function POST(request: Request) {
     if (supabase) {
       const sessionRow = {
         session_id: result.session.session_id,
-        project_id: result.session.project_id,
+        project_id: selectedProjectId ?? result.session.project_id,
         mode: result.session.mode,
         selected_drive: result.session.selected_drive,
         title: result.session.title,
@@ -226,10 +226,10 @@ export async function POST(request: Request) {
 
       const artifactRow = {
         artifact_id: artifact.artifact_id,
-        project_id: artifact.project_id,
+        project_id: selectedProjectId ?? artifact.project_id,
         session_id: artifact.session_id,
         primary_idea_id: artifact.primary_idea_id,
-        primary_thread_id: artifact.primary_thread_id,
+        primary_thread_id: selectedThreadId ?? artifact.primary_thread_id,
         title: artifact.title,
         summary: artifact.summary,
         medium: artifact.medium,

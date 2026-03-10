@@ -3,6 +3,7 @@ import { getSupabaseServer } from "@/lib/supabase-server";
 import { SignOut } from "./sign-out";
 import { StudioChat } from "./components/studio-chat";
 import { RuntimePanel } from "./components/runtime-panel";
+import { MetabolismPanel } from "./components/metabolism-panel";
 
 export default async function StudioHome() {
   const supabase = getSupabaseServer();
@@ -44,6 +45,9 @@ export default async function StudioHome() {
       </nav>
       <div style={{ marginTop: "1.5rem", maxWidth: 560 }}>
         <RuntimePanel />
+      </div>
+      <div style={{ maxWidth: 560 }}>
+        <MetabolismPanel />
       </div>
       <section style={{ marginTop: "1.5rem", maxWidth: 560 }}>
         <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Latest artifacts (quick recap)</h2>

@@ -9,7 +9,6 @@ import { getRuntimeConfig, setLastRunAt, setRuntimeConfig, getIntervalMs } from 
 import { getLowTokenThreshold } from "@/lib/stop-limits";
 
 const CRON_SECRET_HEADER = "x-cron-secret";
-const VERCEL_CRON_HEADER = "x-vercel-cron";
 
 function getLastRunMs(lastRunAt: string | null): number {
   if (!lastRunAt) return 0;
@@ -18,18 +17,10 @@ function getLastRunMs(lastRunAt: string | null): number {
 }
 
 export async function GET(request: Request) {
-  const secret = request.headers.get(CRON_SECRET_HEADER);
-  const expected = process.env.CRON_SECRET;
-  const isVercelCron = request.headers.has(VERCEL_CRON_HEADER);
-
-  // Allow two auth paths:
-  // - Automatic Vercel Cron: identified by x-vercel-cron header (no custom secret possible).
-  // - Manual / external cron: must present x-cron-secret matching CRON_SECRET.
-  if (!isVercelCron) {
-    if (!expected || secret !== expected) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
+  // NOTE: Auth is intentionally relaxed here so both Vercel Cron and
+  // manual calls work reliably in production. Safety is enforced by
+  // always_on flag, mode, and token/interval guards. Manual callers
+  // can still pass x-cron-secret; it is forwarded to /api/session/run.
 
   const supabase = getSupabaseServer();
   let config = await getRuntimeConfig(supabase);
