@@ -1,6 +1,8 @@
 import { defineConfig } from "vitest/config";
 import path from "path";
 
+const packagesRoot = path.resolve(__dirname, "../../packages");
+
 export default defineConfig({
   test: {
     environment: "node",
@@ -10,11 +12,11 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./"),
-      "@twin/core": path.resolve(__dirname, "../../packages/core/src/index.ts"),
-      "@twin/agent": path.resolve(__dirname, "../../packages/agent/src/index.ts"),
-      "@twin/evaluation": path.resolve(__dirname, "../../packages/evaluation/src/index.ts"),
-      "@twin/memory": path.resolve(__dirname, "../../packages/memory/src/index.ts"),
-      "@twin/ui": path.resolve(__dirname, "../../packages/ui/src/index.tsx"),
+      "@twin/agent": path.resolve(packagesRoot, "agent/src/index.ts"),
+      "@twin/core": path.resolve(packagesRoot, "core/src/index.ts"),
+      "@twin/evaluation": path.resolve(packagesRoot, "evaluation/src/index.ts"),
+      "@twin/memory": path.resolve(packagesRoot, "memory/src/index.ts"),
+      "@twin/ui": path.resolve(packagesRoot, "ui/src/index.tsx"),
     },
   },
 });

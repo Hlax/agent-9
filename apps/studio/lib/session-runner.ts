@@ -32,6 +32,7 @@ import {
 } from "@/lib/stop-limits";
 import { detectRepetition } from "@/lib/repetition-detection";
 import { addTokenUsage, getRuntimeConfig } from "@/lib/runtime-config";
+import { createArchiveEntry } from "@twin/memory";
 
 /** Create bucket "artifacts" in Supabase Dashboard → Storage if missing. */
 const ARTIFACTS_BUCKET = "artifacts";
@@ -448,6 +449,28 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       throw new SessionRunError(500, { error: `Artifact update failed: ${artifactUpdateError.message}` });
     }
 
+    // A-3: Archive loop — when critique marks this artifact as an archive candidate, create an archive_entry
+    // so future return-mode sessions can select from autonomously generated archive history.
+    if (critique.critique_outcome === "archive_candidate") {
+      const archiveEntry = createArchiveEntry({
+        project_id: selectedProjectId ?? artifact.project_id,
+        artifact_id: artifact.artifact_id,
+        idea_id: selectedIdeaId ?? artifact.primary_idea_id,
+        idea_thread_id: selectedThreadId ?? artifact.primary_thread_id,
+        reason_paused: critique.overall_summary?.slice(0, 500) ?? "archive_candidate",
+        creative_pull: evaluation.pull_score,
+        recurrence_score: evaluation.recurrence_score,
+        last_session_id: result.session.session_id,
+      });
+      const { error: archiveError } = await supabase.from("archive_entry").insert(archiveEntry);
+      if (archiveError) {
+        console.warn("[session] archive_entry insert failed", {
+          artifact_id: artifact.artifact_id,
+          error: archiveError.message,
+        });
+      }
+    }
+
     // Concept-to-proposal: if concept artifact is eligible, create or refresh a habitat layout proposal
     // only when backlog is under cap (agent focuses on publishing or other lanes when backlog is full).
     if (artifact.medium === "concept") {
@@ -678,6 +701,34 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
     if (memError) {
       throw new SessionRunError(500, { error: `Memory record insert failed: ${memError.message}` });
     }
+
+    // A-2: Recurrence writeback — propagate evaluation.recurrence_score to the selected idea and thread.
+    // Uses direct overwrite (smaller scope than EWA for this PR). Failures are soft-logged and do not abort the session.
+    if (selectedIdeaId) {
+      const { error: ideaRecurrenceError } = await supabase
+        .from("idea")
+        .update({ recurrence_score: evaluation.recurrence_score, updated_at: new Date().toISOString() })
+        .eq("idea_id", selectedIdeaId);
+      if (ideaRecurrenceError) {
+        console.warn("[session] recurrence writeback failed for idea", {
+          idea_id: selectedIdeaId,
+          error: ideaRecurrenceError.message,
+        });
+      }
+    }
+    if (selectedThreadId) {
+      const { error: threadRecurrenceError } = await supabase
+        .from("idea_thread")
+        .update({ recurrence_score: evaluation.recurrence_score, updated_at: new Date().toISOString() })
+        .eq("idea_thread_id", selectedThreadId);
+      if (threadRecurrenceError) {
+        console.warn("[session] recurrence writeback failed for idea_thread", {
+          idea_thread_id: selectedThreadId,
+          error: threadRecurrenceError.message,
+        });
+      }
+    }
+
     const tokensUsedForRecord = "tokensUsed" in result && typeof result.tokensUsed === "number" ? result.tokensUsed : 0;
     if (tokensUsedForRecord > 0) await addTokenUsage(supabase, tokensUsedForRecord);
 
