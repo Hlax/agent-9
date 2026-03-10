@@ -92,5 +92,9 @@ export const approval_state = [
   "rejected",
   "archived",
   "approved_for_publication",
+  "approved_for_staging",
+  "staged",
+  "ignored",
+  "published",
 ] as const;
 export type ApprovalState = (typeof approval_state)[number];

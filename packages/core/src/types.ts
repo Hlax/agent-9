@@ -193,7 +193,7 @@ export interface ProposalRecord {
   title: string;
   summary: string | null;
   proposal_role?: string | null;
-  proposal_state: string;
+  proposal_state: ApprovalState;
   preview_uri: string | null;
   review_note: string | null;
   habitat_payload_json?: Record<string, unknown> | null;
