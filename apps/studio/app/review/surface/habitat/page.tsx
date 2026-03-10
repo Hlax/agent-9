@@ -1,23 +1,24 @@
 import Link from "next/link";
-import { HabitatProposalList } from "./habitat-proposal-list";
+import { HabitatProposalList, HabitatProposalTabs } from "./habitat-proposal-list";
 
-/**
- * Public habitat proposal review path.
- * Twin may propose a staging_habitat or public_habitat change; Harvey approves before publication.
- * First-class reviewable flow — not an artifact approval.
- */
-export default function PublicHabitatProposalReviewPage() {
+export default async function HabitatProposalReviewPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string }>;
+}) {
+  const params = await searchParams;
+  const view = (params.view === "approved" || params.view === "archived" ? params.view : "pending_review") as "pending_review" | "approved" | "archived";
+
   return (
     <main>
       <h1>Public habitat proposal review</h1>
+      <p>Review staging habitat and public habitat proposals.</p>
       <p>
-        Review proposed staging or public habitat (index/home) changes. Approve before publishing to public site.
+        <Link href="/review/surface">← Surface</Link>
       </p>
-      <p>
-        <Link href="/review/surface">← Surface proposals</Link>
-      </p>
-      <section style={{ marginTop: "1rem" }}>
-        <HabitatProposalList />
+      <HabitatProposalTabs view={view} />
+      <section>
+        <HabitatProposalList view={view} />
       </section>
     </main>
   );

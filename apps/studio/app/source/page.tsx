@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { AddSourceItemForm } from "./add-source-item-form";
 import { ImportFromUrlForm } from "./import-from-url-form";
+import { UploadDocForm } from "./upload-doc-form";
 
 /**
  * Source library: identity seed and reference items used as session context.
@@ -24,7 +25,7 @@ export default async function SourceLibraryPage() {
   return (
     <main style={{ maxWidth: 720, margin: "0 auto", padding: "1rem" }}>
       <p>
-        <Link href="/">← Studio</Link> · <Link href="/identity">Identity</Link> · <Link href="/session">Session</Link>
+        <Link href="/">← Twin</Link> · <Link href="/identity">Identity</Link> · <Link href="/session">Session</Link>
       </p>
       <h1>Source library (brain context)</h1>
       <p>
@@ -38,6 +39,14 @@ export default async function SourceLibraryPage() {
           Fetch a webpage and store it as one source item (title + extracted text). The crawl runs when you click Import.
         </p>
         <ImportFromUrlForm />
+      </section>
+
+      <section style={{ marginTop: "2rem" }}>
+        <h2>Upload document</h2>
+        <p style={{ fontSize: "0.9rem", color: "#555" }}>
+          Upload a .md or .txt file to add its contents as one source item.
+        </p>
+        <UploadDocForm />
       </section>
 
       <section style={{ marginTop: "2rem" }}>

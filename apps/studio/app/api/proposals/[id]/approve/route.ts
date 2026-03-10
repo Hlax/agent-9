@@ -32,7 +32,11 @@ export async function POST(
     if (action === "apply_name" && proposal.target_type === "identity_name") {
       const { data: ident } = await supabase.from("identity").select("identity_id").eq("is_active", true).limit(1).maybeSingle();
       if (ident) {
-        await supabase.from("identity").update({ name: proposal.title ?? "", updated_at: new Date().toISOString() }).eq("identity_id", ident.identity_id);
+        await supabase.from("identity").update({
+          name: proposal.title ?? "",
+          name_status: "accepted",
+          updated_at: new Date().toISOString(),
+        }).eq("identity_id", ident.identity_id);
       }
     }
     if (action === "approve_avatar" && proposal.target_type === "avatar_candidate") {

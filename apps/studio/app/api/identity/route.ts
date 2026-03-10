@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
-const IDENTITY_FIELDS = "identity_id, name, summary, philosophy, embodiment_direction, habitat_direction";
+const IDENTITY_FIELDS = "identity_id, name, name_status, name_rationale, naming_readiness_score, naming_readiness_notes, summary, philosophy, embodiment_direction, habitat_direction";
 
 /**
  * GET /api/identity — return the active identity row.
@@ -65,12 +65,21 @@ export async function PATCH(request: Request) {
 
     const { data: existing } = await supabase
       .from("identity")
-      .select("identity_id, name")
+      .select("identity_id, name, name_status")
       .eq("is_active", true)
       .eq("status", "active")
       .order("updated_at", { ascending: false })
       .limit(1)
       .maybeSingle();
+
+    if (existing?.name_status === "accepted" && existing.name) {
+      if (name !== undefined && (name === null || name !== existing.name)) {
+        return NextResponse.json(
+          { error: "Name is already accepted. Do not clear or change it; use the name proposal flow to revisit." },
+          { status: 400 }
+        );
+      }
+    }
 
     const now = new Date().toISOString();
     const updates: Record<string, unknown> = { updated_at: now };

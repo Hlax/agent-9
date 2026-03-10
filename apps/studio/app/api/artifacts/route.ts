@@ -24,14 +24,23 @@ export async function GET(request: Request) {
     }
 
     const { searchParams } = new URL(request.url);
-    const state = searchParams.get("state"); // optional filter: pending_review | all
+    const state = searchParams.get("state");
+    const view = searchParams.get("view"); // queue | approved | archived
 
     let query = supabase
       .from("artifact")
       .select("artifact_id, title, summary, medium, current_approval_state, current_publication_state, created_at")
       .order("created_at", { ascending: false });
 
-    if (state && state !== "all") {
+    if (view === "approved") {
+      query = query.in("current_approval_state", [
+        "approved",
+        "approved_with_annotation",
+        "approved_for_publication",
+      ]);
+    } else if (view === "archived") {
+      query = query.eq("current_approval_state", "archived");
+    } else if (state && state !== "all") {
       query = query.eq("current_approval_state", state);
     } else if (!state || state === "queue") {
       query = query.in("current_approval_state", [

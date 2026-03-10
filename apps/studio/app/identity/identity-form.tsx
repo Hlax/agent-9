@@ -24,6 +24,8 @@ export function IdentityForm({ initial }: { initial: IdentityRow }) {
   const [saveMessage, setSaveMessage] = useState("");
   const [bootstrapStatus, setBootstrapStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [bootstrapMessage, setBootstrapMessage] = useState("");
+  const [readinessStatus, setReadinessStatus] = useState<"idle" | "running" | "done" | "error">("idle");
+  const [readinessMessage, setReadinessMessage] = useState("");
 
   useEffect(() => {
     if (initial) {
@@ -85,8 +87,43 @@ export function IdentityForm({ initial }: { initial: IdentityRow }) {
     }
   }
 
+  async function handleEvaluateReadiness() {
+    setReadinessStatus("running");
+    setReadinessMessage("");
+    try {
+      const res = await fetch("/api/identity/evaluate-naming-readiness", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Evaluation failed");
+      setReadinessMessage(`Score: ${data.score?.toFixed(2) ?? "—"}. ${data.notes ?? ""}`);
+      setReadinessStatus("done");
+      router.refresh();
+    } catch (err) {
+      setReadinessMessage(err instanceof Error ? err.message : "Failed");
+      setReadinessStatus("error");
+    }
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem", marginTop: "1.5rem" }}>
+      <section>
+        <h2 style={{ marginBottom: "0.5rem" }}>Naming readiness</h2>
+        <p style={{ fontSize: "0.9rem", color: "#555", marginBottom: "0.75rem" }}>
+          Refresh the Twin&apos;s naming readiness score (used in chat when Harvey asks for the Twin&apos;s name).
+        </p>
+        <button
+          type="button"
+          onClick={handleEvaluateReadiness}
+          disabled={readinessStatus === "running"}
+          style={{ padding: "0.5rem 1rem" }}
+        >
+          {readinessStatus === "running" ? "Evaluating…" : "Evaluate naming readiness"}
+        </button>
+        {readinessMessage && (
+          <p style={{ marginTop: "0.5rem", fontSize: "0.9rem", color: readinessStatus === "error" ? "#c00" : "#363" }}>
+            {readinessMessage}
+          </p>
+        )}
+      </section>
       <section>
         <h2 style={{ marginBottom: "0.5rem" }}>Generate from source library</h2>
         <p style={{ fontSize: "0.9rem", color: "#555", marginBottom: "0.75rem" }}>

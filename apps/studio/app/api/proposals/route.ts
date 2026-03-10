@@ -15,9 +15,11 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const lane_type = searchParams.get("lane_type");
     const target_type = searchParams.get("target_type");
+    const proposal_state = searchParams.get("proposal_state");
     let query = supabase.from("proposal_record").select("*").order("created_at", { ascending: false }).limit(50);
     if (lane_type) query = query.eq("lane_type", lane_type);
     if (target_type) query = query.eq("target_type", target_type);
+    if (proposal_state) query = query.eq("proposal_state", proposal_state);
     const { data, error } = await query;
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ proposals: data ?? [] });

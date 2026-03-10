@@ -15,7 +15,7 @@ export default async function SessionsListPage() {
 
   return (
     <main style={{ maxWidth: 720, margin: "0 auto", padding: "1rem" }}>
-      <p><Link href="/">← Studio</Link> · <Link href="/session">Session</Link></p>
+      <p><Link href="/">← Twin</Link> · <Link href="/session">Session</Link></p>
       <h1>Sessions</h1>
       <p>Recent creative sessions. Click to inspect artifacts, critique, evaluation, state snapshot, and memory.</p>
       {sessions.length === 0 ? (

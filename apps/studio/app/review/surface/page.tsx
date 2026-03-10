@@ -13,7 +13,7 @@ export default function SurfaceReviewPage() {
         Review staging habitat and public habitat proposals. Separate from artifact approval.
       </p>
       <p>
-        <Link href="/">← Studio</Link>
+        <Link href="/">← Twin</Link>
       </p>
       <nav style={{ display: "flex", gap: "1rem", marginTop: "1rem", flexWrap: "wrap" }}>
         <Link href="/review/surface/avatar">Avatar candidate review</Link>

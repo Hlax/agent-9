@@ -43,7 +43,7 @@ export default async function SessionDetailPage({
 
   return (
     <main style={{ maxWidth: 720, margin: "0 auto", padding: "1rem" }}>
-      <p><Link href="/">← Studio</Link> · <Link href="/session">Session</Link></p>
+      <p><Link href="/">← Twin</Link> · <Link href="/session">Session</Link></p>
       <h1>Session {sessionId.slice(0, 8)}…</h1>
       <p><strong>Mode:</strong> {session.mode} · <strong>Started:</strong> {new Date(session.started_at).toISOString()}</p>
 

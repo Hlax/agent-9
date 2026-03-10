@@ -34,7 +34,7 @@ export default function SessionPage() {
 
   return (
     <main style={{ maxWidth: 720, margin: "0 auto", padding: "1rem" }}>
-      <p><Link href="/">← Studio</Link> · <Link href="/sessions">Sessions</Link></p>
+      <p><Link href="/">← Twin</Link> · <Link href="/sessions">Sessions</Link></p>
       <h1>Start session</h1>
       <p>Run one creative session (GPT pipeline: one artifact, critique, evaluation, state snapshot, memory).</p>
       <p>

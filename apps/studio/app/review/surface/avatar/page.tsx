@@ -1,21 +1,24 @@
 import Link from "next/link";
-import { AvatarProposalList } from "./avatar-proposal-list";
+import { AvatarProposalList, AvatarProposalTabs } from "./avatar-proposal-list";
 
-/**
- * Avatar candidate review path.
- * Twin may propose an avatar; Harvey approves before it is used (e.g. in staging or identity).
- * First-class reviewable flow — not an artifact approval.
- */
-export default function AvatarCandidateReviewPage() {
+export default async function AvatarCandidateReviewPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string }>;
+}) {
+  const params = await searchParams;
+  const view = (params.view === "approved" || params.view === "archived" ? params.view : "pending_review") as "pending_review" | "approved" | "archived";
+
   return (
     <main>
       <h1>Avatar candidate review</h1>
-      <p>Review proposed avatar submissions. Approve or reject for use in identity/staging.</p>
+      <p>Review proposed avatar submissions. Approve or archive.</p>
       <p>
-        <Link href="/review/surface">← Surface proposals</Link>
+        <Link href="/review/surface">← Surface</Link>
       </p>
-      <section style={{ marginTop: "1rem" }}>
-        <AvatarProposalList />
+      <AvatarProposalTabs view={view} />
+      <section>
+        <AvatarProposalList view={view} />
       </section>
     </main>
   );

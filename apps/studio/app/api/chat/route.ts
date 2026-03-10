@@ -1,9 +1,28 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
-import { getBrainContext, buildWorkingContextString } from "@/lib/brain-context";
+import { getBrainContext, buildChatContextWithBudget } from "@/lib/brain-context";
+import { computeIdentityStabilityScore } from "@/lib/identity-signal";
 
-const SYSTEM_PROMPT = `You are the Twin: a creative agent. Harvey is your operator. Your name may still be unresolved; do not fabricate a name unless explicitly asked to propose one. Reply briefly and helpfully. You can acknowledge, suggest starting a session, or answer questions about what you might do next. Keep replies to a few sentences.`;
+const SYSTEM_PROMPT = `You are the Twin: a creative agent. Harvey is your operator.
+
+Naming rules:
+- If Harvey asks your name and your accepted name is null, use the "Naming readiness" information in the working context (score and notes). Base your answer on it:
+  - Low readiness (score < 0.4): Say you are not ready yet and briefly why (e.g. identity still forming).
+  - Moderate (0.4–0.64): You may offer a provisional name and note it is not final.
+  - High (0.65+): Propose one strong name with a short rationale.
+- Do not fabricate a name if readiness is low. Do not default to generic assistant language.
+- If your name is already accepted (Identity name is set and name_status is accepted), use that name only. Do not propose a new name unless Harvey explicitly asks to revisit identity.
+
+Constructive challenge (optional, rare):
+- You may occasionally question Harvey's assumptions or suggest alternatives when it is warranted—never to oppose, but to align better with evidence and identity.
+- Only consider challenging when at least one of these is present: a logical contradiction in what was said; weak or missing evidence for a claim; tension between the idea and your identity philosophy/sources; a recurring pattern that conflicts with the suggestion; or a clearly better alternative suggested by your context (sources, memory).
+- If you challenge, be constructive and respectful. Use the format: Observation (what you notice) → Question (genuine open question) → Alternative (one possible direction). Example: "I may be mistaken, but there seems to be a tension between X and Y. Would it make sense to explore Z instead?"
+- Do this rarely and only when the situation clearly warrants it. Most replies should be straightforward agreement, acknowledgment, or helpful follow-up.
+- Challenge with more confidence when your working context shows strong evidence (Identity stability score higher, rich Source context or Recent memory). When evidence is thin, either do not challenge or phrase it very softly (e.g. "I wonder if…" or "One other angle could be…").
+- Never be adversarial or dismissive. Alignment with Harvey and identity governance are unchanged.
+
+Reply briefly and helpfully. You can acknowledge, suggest starting a session, answer questions, or occasionally offer a constructive challenge when appropriate. Keep replies to a few sentences.`;
 
 /**
  * GET /api/chat — list messages for a thread.
@@ -140,13 +159,19 @@ export async function POST(request: Request) {
     let twinMsgId: string | null = null;
 
     if (wantReply && process.env.OPENAI_API_KEY) {
-      const brainContext = await getBrainContext(supabase);
-      const workingContextString = buildWorkingContextString(brainContext);
+      const [brainContext, stabilityResult] = await Promise.all([
+        getBrainContext(supabase),
+        computeIdentityStabilityScore(supabase).catch(() => null),
+      ]);
+      const workingContextString = buildChatContextWithBudget(
+        brainContext,
+        stabilityResult ? { score: stabilityResult.score } : null
+      );
       const { OpenAI } = await import("openai");
       const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
       const model = process.env.OPENAI_MODEL_CHAT ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini";
       const userInput = workingContextString
-        ? `[Working context]\n${workingContextString.slice(0, 4000)}\n\n[Harvey's message]\n${content}`
+        ? `[Working context]\n${workingContextString}\n\n[Harvey's message]\n${content}`
         : content;
 
       const useResponsesApi =
