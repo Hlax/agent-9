@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { ArtifactActions } from "./artifact-actions";
+import { HumanFeedbackForm } from "./human-feedback-form";
 import { MOCK_LAYOUT_ENABLED, mockArtifacts } from "../mock-layout-data";
 
 const VIEWS = [
@@ -81,6 +82,7 @@ export default async function ArtifactReviewPage({
             {list.map((a) => (
               <li
                 key={a.artifact_id}
+                id={`artifact-${a.artifact_id}`}
                 style={{
                   border: "1px solid #ddd",
                   padding: "1rem",
@@ -125,6 +127,7 @@ export default async function ArtifactReviewPage({
                       publicationState={a.current_publication_state}
                       medium={a.medium}
                     />
+                    <HumanFeedbackForm artifactId={a.artifact_id} />
                   </>
                 )}
               </li>

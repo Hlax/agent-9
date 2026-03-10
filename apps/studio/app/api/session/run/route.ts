@@ -8,6 +8,7 @@ import {
   computeDriveWeights,
   computeSessionMode,
   selectDrive,
+  type CreativeStateFields,
 } from "@twin/evaluation";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { getLatestCreativeState } from "@/lib/creative-state-load";
@@ -22,6 +23,49 @@ import { addTokenUsage } from "@/lib/runtime-config";
 
 /** Create bucket "artifacts" in Supabase Dashboard → Storage if missing. */
 const ARTIFACTS_BUCKET = "artifacts";
+
+/**
+ * Derive a preferred medium from creative state when not explicitly set.
+ * Explicit preferMedium from the caller always wins; this is used primarily
+ * for cron / autonomous sessions to nudge the Twin toward different media.
+ */
+function derivePreferredMedium(
+  state: CreativeStateFields,
+  explicit: "writing" | "concept" | "image" | null,
+  isCron: boolean
+): "writing" | "concept" | "image" | null {
+  if (explicit) return explicit;
+
+  const {
+    expression_diversity,
+    creative_tension,
+    reflection_need,
+    unfinished_projects,
+    avatar_alignment,
+    public_curation_backlog,
+  } = state;
+
+  // High reflection need or many unfinished projects → concept artifacts.
+  if (reflection_need > 0.65 || unfinished_projects > 0.55) {
+    return "concept";
+  }
+
+  // Low avatar alignment with growing public backlog or low expression diversity under tension → image.
+  if (
+    (avatar_alignment < 0.4 && public_curation_backlog > 0.4) ||
+    (expression_diversity < 0.35 && creative_tension > 0.5)
+  ) {
+    return "image";
+  }
+
+  // For cron runs, keep a small chance of images to propose avatars over time.
+  if (isCron && Math.random() < 0.12) {
+    return "image";
+  }
+
+  // Default: writing (by leaving null, pipeline treats this as writing/concept path).
+  return null;
+}
 
 /**
  * Fetch image from URL and upload to Supabase Storage. Returns public URL or null.
@@ -77,9 +121,6 @@ export async function POST(request: Request) {
       }
       if (body?.preferMedium === "image" || body?.preferMedium === "writing" || body?.preferMedium === "concept") {
         preferMedium = body.preferMedium;
-      } else if (body && Object.keys(body).length === 0) {
-        // Cron or empty POST: sometimes choose image so the Twin can propose avatars over many cycles (~12% image, ~88% writing/concept from mode).
-        preferMedium = Math.random() < 0.12 ? "image" : null;
       }
     } catch {
       // no body
@@ -94,7 +135,8 @@ export async function POST(request: Request) {
       : { projectId: null };
     const brainContext = await getBrainContext(supabase);
     const workingContextString = buildWorkingContextString(brainContext);
-    const effectiveMode = preferMedium === "concept" ? "reflect" : mode;
+    const derivedPreferMedium = derivePreferredMedium(previousState, preferMedium, isCron);
+    const effectiveMode = derivedPreferMedium === "concept" ? "reflect" : mode;
     const result = await runSessionPipeline(
       {
         mode: effectiveMode,
@@ -102,7 +144,7 @@ export async function POST(request: Request) {
         projectId: selectedProjectId ?? undefined,
         promptContext: promptContext ?? undefined,
         sourceContext: workingContextString || undefined,
-        preferMedium: preferMedium ?? undefined,
+        preferMedium: derivedPreferMedium ?? undefined,
       },
       { openaiApiKey: process.env.OPENAI_API_KEY ?? undefined }
     );
@@ -126,7 +168,7 @@ export async function POST(request: Request) {
       return NextResponse.json({
         session_id: result.session.session_id,
         artifact_count: 0,
-        requested_medium: preferMedium ?? undefined,
+        requested_medium: derivedPreferMedium ?? undefined,
       });
     }
 
@@ -445,7 +487,7 @@ export async function POST(request: Request) {
       session_id: result.session.session_id,
       artifact_count: result.artifacts.length,
       persisted: Boolean(supabase),
-      requested_medium: preferMedium ?? undefined,
+      requested_medium: derivedPreferMedium ?? undefined,
       artifact_medium: artifact.medium,
     });
   } catch (e) {

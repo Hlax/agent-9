@@ -6,6 +6,10 @@ export async function middleware(request: Request) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    // Protect all routes except:
+    // - static assets
+    // - favicon
+    // - public APIs used by habitat / cron
+    "/((?!_next/static|_next/image|favicon.ico|api/public/|api/cron/session).*)",
   ],
 };

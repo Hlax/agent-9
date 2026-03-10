@@ -10,6 +10,7 @@ export default async function StudioHome() {
     | {
         artifact_id: string;
         medium: string;
+        session_id: string | null;
         created_at: string;
       }[]
     = [];
@@ -17,7 +18,7 @@ export default async function StudioHome() {
   if (supabase) {
     const { data } = await supabase
       .from("artifact")
-      .select("artifact_id, medium, created_at")
+      .select("artifact_id, medium, session_id, created_at")
       .order("created_at", { ascending: false })
       .limit(10);
     latestArtifacts = data ?? [];
@@ -68,7 +69,13 @@ export default async function StudioHome() {
                 }}
               >
                 <span style={{ maxWidth: "40%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  <code style={{ fontSize: "0.8rem" }}>{a.artifact_id.slice(0, 8)}…</code>
+                  {a.session_id ? (
+                    <Link href={`/review/artifacts#artifact-${a.artifact_id}`}>
+                      <code style={{ fontSize: "0.8rem" }}>{a.artifact_id.slice(0, 8)}…</code>
+                    </Link>
+                  ) : (
+                    <code style={{ fontSize: "0.8rem" }}>{a.artifact_id.slice(0, 8)}…</code>
+                  )}
                 </span>
                 <span style={{ minWidth: 70, textAlign: "center", color: "#333" }}>{a.medium}</span>
                 <span style={{ flex: 1, textAlign: "right", color: "#666" }}>
