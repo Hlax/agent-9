@@ -123,6 +123,7 @@ export interface Artifact {
   fertility_score: number | null;
   pull_score: number | null;
   recurrence_score: number | null;
+  artifact_role: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -188,11 +189,14 @@ export interface ProposalRecord {
   lane_type: ApprovalLane;
   target_type: string;
   target_id: string | null;
+  target_surface: string | null;
   title: string;
   summary: string | null;
+  proposal_role: string | null;
   proposal_state: string;
   preview_uri: string | null;
   review_note: string | null;
+  habitat_payload_json: object | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
