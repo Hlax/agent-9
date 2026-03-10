@@ -286,30 +286,6 @@ export async function POST(request: Request) {
           });
           proposalCreated = true;
         }
-        if (!nameAccepted && !proposalCreated) {
-          const fallbackMatch =
-            replyContent.match(/(?:call me|you can call me|let'?s go with)\s+["']([^"']+)["']/i) ||
-            replyContent.match(/(?:call me|you can call me)\s+([A-Z][a-z]+)\b/i) ||
-            replyContent.match(/(?:my name is|I'?m)\s+([A-Z][a-z]+)\b/i) ||
-            replyContent.match(/\b([A-Z][a-z]{2,20})\b(?:\s*\.|,|\s+It\s|\.\s+It\s)/);
-          const proposedName = fallbackMatch?.[1]?.trim() ?? null;
-          if (proposedName && !/^(Creative|Assistant|Twin|Your|Harvey)$/i.test(proposedName)) {
-            const rationale = replyContent.slice(0, 200).trim();
-            await supabase.from("proposal_record").insert({
-              lane_type: "surface",
-              target_type: "identity_name",
-              target_id: null,
-              title: proposedName,
-              summary: rationale || null,
-              proposal_state: "pending_review",
-              preview_uri: null,
-              review_note: null,
-              created_by: user?.email ?? "harvey",
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            });
-          }
-        }
         twinMsgId = crypto.randomUUID();
         await supabase.from("chat_message").insert({
           message_id: twinMsgId,
