@@ -1,9 +1,28 @@
 import Link from "next/link";
+import { getSupabaseServer } from "@/lib/supabase-server";
 import { SignOut } from "./sign-out";
 import { StudioChat } from "./components/studio-chat";
 import { RuntimePanel } from "./components/runtime-panel";
 
-export default function StudioHome() {
+export default async function StudioHome() {
+  const supabase = getSupabaseServer();
+  let latestArtifacts:
+    | {
+        artifact_id: string;
+        medium: string;
+        created_at: string;
+      }[]
+    = [];
+
+  if (supabase) {
+    const { data } = await supabase
+      .from("artifact")
+      .select("artifact_id, medium, created_at")
+      .order("created_at", { ascending: false })
+      .limit(10);
+    latestArtifacts = data ?? [];
+  }
+
   return (
     <main>
       <h1>Twin Studio</h1>
@@ -25,6 +44,41 @@ export default function StudioHome() {
       <div style={{ marginTop: "1.5rem", maxWidth: 560 }}>
         <RuntimePanel />
       </div>
+      <section style={{ marginTop: "1.5rem", maxWidth: 560 }}>
+        <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Latest artifacts (quick recap)</h2>
+        <p style={{ margin: "0 0 0.5rem", fontSize: "0.9rem", color: "#555" }}>
+          Last 10 artifacts by creation time. ID, medium, and timestamp.
+        </p>
+        {latestArtifacts.length === 0 ? (
+          <p style={{ fontSize: "0.9rem", color: "#666" }}>
+            <em>No artifacts yet. Run a session to generate one.</em>
+          </p>
+        ) : (
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {latestArtifacts.map((a) => (
+              <li
+                key={a.artifact_id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: "0.75rem",
+                  padding: "0.5rem 0",
+                  borderBottom: "1px solid #eee",
+                  fontSize: "0.9rem",
+                }}
+              >
+                <span style={{ maxWidth: "40%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <code style={{ fontSize: "0.8rem" }}>{a.artifact_id.slice(0, 8)}…</code>
+                </span>
+                <span style={{ minWidth: 70, textAlign: "center", color: "#333" }}>{a.medium}</span>
+                <span style={{ flex: 1, textAlign: "right", color: "#666" }}>
+                  {new Date(a.created_at).toLocaleString()}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
       <StudioChat />
     </main>
   );
