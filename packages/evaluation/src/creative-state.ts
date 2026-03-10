@@ -81,23 +81,38 @@ function noveltyScore(e: EvaluationSignal): number {
 }
 
 /**
+ * Signals for creative state update. All fields optional; falsy values are safe defaults.
+ */
+export interface CreativeStateSignals {
+  repetitionDetected?: boolean;
+  isReflection?: boolean;
+  exploredNewMedium?: boolean;
+  addedUnfinishedWork?: boolean;
+}
+
+/**
  * Update creative state after one artifact using evaluation signals.
  * Returns new state object; caller persists as creative_state_snapshot.
  * If repetitionDetected is true, bumps reflection_need so next session tends to reflect.
+ * If isReflection is true, decreases reflection_need.
  */
 export function updateCreativeState(
   prev: CreativeStateFields,
   evaluation: EvaluationSignal,
-  repetitionDetected?: boolean
+  signals?: CreativeStateSignals | boolean
 ): CreativeStateFields {
+  // Support legacy boolean third arg for backward compatibility.
+  const resolved: CreativeStateSignals =
+    typeof signals === "boolean"
+      ? { repetitionDetected: signals }
+      : (signals ?? {});
+  const { repetitionDetected = false, isReflection = false, exploredNewMedium = false, addedUnfinishedWork = false } = resolved;
+
   const pull = evaluation.pull_score ?? 0.5;
   const recurrence = evaluation.recurrence_score ?? 0.2;
   const emergence = evaluation.emergence_score ?? 0.5;
   const alignment = evaluation.alignment_score ?? 0.5;
   const novelty = noveltyScore(evaluation);
-  const isReflection = false;
-  const exploredNewMedium = false;
-  const addedUnfinishedWork = false;
 
   const next: CreativeStateFields = { ...prev };
 

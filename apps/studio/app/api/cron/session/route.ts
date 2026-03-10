@@ -6,8 +6,8 @@
  */
 import { NextResponse } from "next/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
-import { getRuntimeConfig, setLastRunAt, setRuntimeConfig, getIntervalMs } from "@/lib/runtime-config";
-import { getLowTokenThreshold } from "@/lib/stop-limits";
+import { getRuntimeConfig, setLastRunAt, setRuntimeConfig, getIntervalMs, getSessionsRunInLastHour } from "@/lib/runtime-config";
+import { getLowTokenThreshold, getMaxSessionsPerHour } from "@/lib/stop-limits";
 import { runSessionInternal, SessionRunError } from "@/lib/session-runner";
 
 const CRON_SECRET_HEADER = "x-cron-secret";
@@ -141,6 +141,19 @@ export async function GET(request: Request) {
   }
 
   console.log("[cron/session] session run started");
+
+  // C-1: Hourly session rate-limit guard.
+  const maxSessionsPerHour = getMaxSessionsPerHour();
+  if (maxSessionsPerHour > 0 && supabase) {
+    const sessionsThisHour = await getSessionsRunInLastHour(supabase);
+    if (sessionsThisHour >= maxSessionsPerHour) {
+      console.log("[cron/session] rate limit reached", {
+        sessionsThisHour,
+        maxSessionsPerHour,
+      });
+      return NextResponse.json({ error: "Session rate limit reached" }, { status: 429 });
+    }
+  }
 
   try {
     const payload = await runSessionInternal({

@@ -63,3 +63,23 @@ export function getMaxPendingAvatarProposals(): number {
   const n = parseInt(v, 10);
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MAX_PENDING_AVATAR;
 }
+
+/** Max creative_session rows allowed per rolling 1-hour window. 0 = no cap. */
+export const DEFAULT_MAX_SESSIONS_PER_HOUR = 4;
+
+export function getMaxSessionsPerHour(): number {
+  const v = process.env.MAX_SESSIONS_PER_HOUR;
+  if (v == null || v === "") return DEFAULT_MAX_SESSIONS_PER_HOUR;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MAX_SESSIONS_PER_HOUR;
+}
+
+/** Archive decay half-life in days. Canon: archive_and_return.md §6. */
+export const DEFAULT_ARCHIVE_DECAY_HALF_LIFE_DAYS = 60;
+
+export function getArchiveDecayHalfLifeDays(): number {
+  const v = process.env.ARCHIVE_DECAY_HALF_LIFE_DAYS;
+  if (v == null || v === "") return DEFAULT_ARCHIVE_DECAY_HALF_LIFE_DAYS;
+  const n = parseFloat(v);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_ARCHIVE_DECAY_HALF_LIFE_DAYS;
+}
