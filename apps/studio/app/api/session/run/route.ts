@@ -13,6 +13,12 @@ import { getSupabaseServer } from "@/lib/supabase-server";
 import { getLatestCreativeState } from "@/lib/creative-state-load";
 import { getBrainContext, buildWorkingContextString } from "@/lib/brain-context";
 import { createClient } from "@/lib/supabase/server";
+import { isProposalEligible } from "@/lib/proposal-eligibility";
+import { buildMinimalHabitatPayloadFromConcept, summaryFromHabitatPayload, validateHabitatPayload, capSummaryTo200Words } from "@/lib/habitat-payload";
+import { selectProjectAndThread } from "@/lib/project-thread-selection";
+import { getMaxArtifactsPerSession, isOverTokenLimit } from "@/lib/stop-limits";
+import { detectRepetition } from "@/lib/repetition-detection";
+import { addTokenUsage } from "@/lib/runtime-config";
 
 /** Create bucket "artifacts" in Supabase Dashboard → Storage if missing. */
 const ARTIFACTS_BUCKET = "artifacts";
@@ -45,13 +51,21 @@ async function uploadImageToStorage(
  * Requires authenticated user. Loads identity/reference source context when DB is configured.
  * Body (optional): { promptContext?: string, preferMedium?: "writing" | "concept" | "image" }.
  */
+const CRON_SECRET_HEADER = "x-cron-secret";
+
 export async function POST(request: Request) {
   try {
-    const authClient = await createClient().catch(() => null);
-    if (authClient) {
-      const { data: { user } } = await authClient.auth.getUser();
-      if (!user) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let createdBy: string = "harvey";
+    const cronSecret = request.headers.get(CRON_SECRET_HEADER);
+    const isCron = !!process.env.CRON_SECRET && cronSecret === process.env.CRON_SECRET;
+    if (!isCron) {
+      const authClient = await createClient().catch(() => null);
+      if (authClient) {
+        const { data: { user } } = await authClient.auth.getUser();
+        if (!user) {
+          return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+        if (user?.email) createdBy = user.email;
       }
     }
     let promptContext: string | null = null;
@@ -63,6 +77,9 @@ export async function POST(request: Request) {
       }
       if (body?.preferMedium === "image" || body?.preferMedium === "writing" || body?.preferMedium === "concept") {
         preferMedium = body.preferMedium;
+      } else if (body && Object.keys(body).length === 0) {
+        // Cron or empty POST: sometimes choose image so the Twin can propose avatars over many cycles (~12% image, ~88% writing/concept from mode).
+        preferMedium = Math.random() < 0.12 ? "image" : null;
       }
     } catch {
       // no body
@@ -72,6 +89,9 @@ export async function POST(request: Request) {
     const mode = computeSessionMode(previousState);
     const driveWeights = computeDriveWeights(previousState);
     const selectedDrive = selectDrive(driveWeights);
+    const { projectId: selectedProjectId } = supabase
+      ? await selectProjectAndThread(supabase)
+      : { projectId: null };
     const brainContext = await getBrainContext(supabase);
     const workingContextString = buildWorkingContextString(brainContext);
     const effectiveMode = preferMedium === "concept" ? "reflect" : mode;
@@ -79,7 +99,7 @@ export async function POST(request: Request) {
       {
         mode: effectiveMode,
         selectedDrive,
-        projectId: undefined,
+        projectId: selectedProjectId ?? undefined,
         promptContext: promptContext ?? undefined,
         sourceContext: workingContextString || undefined,
         preferMedium: preferMedium ?? undefined,
@@ -87,11 +107,25 @@ export async function POST(request: Request) {
       { openaiApiKey: process.env.OPENAI_API_KEY ?? undefined }
     );
 
-    let artifact = result.artifacts[0];
+    if (isOverTokenLimit(result.tokensUsed)) {
+      return NextResponse.json(
+        {
+          error: "Token limit exceeded; session aborted.",
+          session_id: result.session.session_id,
+          tokens_used: result.tokensUsed,
+        },
+        { status: 400 }
+      );
+    }
+
+    const maxArtifacts = getMaxArtifactsPerSession();
+    const artifacts = result.artifacts.slice(0, maxArtifacts);
+    let artifact = artifacts[0];
     if (!artifact) {
       return NextResponse.json({
         session_id: result.session.session_id,
         artifact_count: 0,
+        requested_medium: preferMedium ?? undefined,
       });
     }
 
@@ -208,6 +242,8 @@ export async function POST(request: Request) {
         );
       }
 
+      const repetitionDetected = await detectRepetition(supabase, critique.critique_outcome);
+
       const evaluationRow = {
         evaluation_signal_id: evaluation.evaluation_signal_id,
         target_type: evaluation.target_type,
@@ -250,6 +286,80 @@ export async function POST(request: Request) {
         );
       }
 
+      // Concept-to-proposal: if concept artifact is eligible, create a proposal (canon: concept_to_proposal_flow.md).
+      if (artifact.medium === "concept") {
+        const eligibility = isProposalEligible({
+          medium: artifact.medium,
+          alignment_score: evaluation.alignment_score,
+          fertility_score: evaluation.fertility_score,
+          pull_score: evaluation.pull_score,
+          critique_outcome: critique.critique_outcome,
+        });
+        if (eligibility.eligible) {
+          const { data: existing } = await supabase
+            .from("proposal_record")
+            .select("proposal_record_id")
+            .eq("target_type", "concept")
+            .eq("target_id", artifact.artifact_id)
+            .in("proposal_state", ["rejected", "archived"])
+            .limit(1)
+            .maybeSingle();
+          if (!existing) {
+            const minimalPayload = buildMinimalHabitatPayloadFromConcept(artifact.title, artifact.summary);
+            const validated = validateHabitatPayload(minimalPayload);
+            const hasPayload = validated.success;
+            const proposalRow = {
+              lane_type: "surface",
+              target_type: "concept",
+              target_id: artifact.artifact_id,
+              artifact_id: artifact.artifact_id,
+              title: artifact.title,
+              summary: hasPayload ? summaryFromHabitatPayload(validated.data) : (artifact.summary?.slice(0, 2000) ?? null),
+              proposal_state: "pending_review",
+              target_surface: hasPayload ? "public_habitat" : "staging_habitat",
+              proposal_type: "layout",
+              habitat_payload_json: hasPayload ? (validated.data as object) : null,
+              preview_uri: null,
+              review_note: null,
+              created_by: createdBy,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            };
+            await supabase.from("proposal_record").insert(proposalRow);
+          }
+        }
+      }
+
+      // Avatar proposal: when image artifact is produced, create an avatar_candidate proposal (Twin proposes this image as avatar).
+      if (artifact.medium === "image") {
+        const { data: existingAvatar } = await supabase
+          .from("proposal_record")
+          .select("proposal_record_id")
+          .eq("target_type", "avatar_candidate")
+          .eq("artifact_id", artifact.artifact_id)
+          .limit(1)
+          .maybeSingle();
+        if (!existingAvatar) {
+          const avatarSummary = capSummaryTo200Words(artifact.summary ?? artifact.title ?? "Proposed as public avatar.");
+          await supabase.from("proposal_record").insert({
+            lane_type: "surface",
+            target_type: "avatar_candidate",
+            target_id: artifact.artifact_id,
+            artifact_id: artifact.artifact_id,
+            title: artifact.title ?? "Avatar candidate",
+            summary: avatarSummary || null,
+            proposal_state: "pending_review",
+            target_surface: null,
+            proposal_type: "avatar",
+            preview_uri: artifact.preview_uri ?? null,
+            review_note: null,
+            created_by: createdBy,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+        }
+      }
+
       const generationRunRow = {
         session_id: result.session.session_id,
         artifact_id: artifact.artifact_id,
@@ -279,7 +389,7 @@ export async function POST(request: Request) {
         );
       }
 
-      const nextState = updateCreativeState(previousState, evaluation);
+      const nextState = updateCreativeState(previousState, evaluation, repetitionDetected);
       const stateSnapshotRow = stateToSnapshotRow(
         nextState,
         result.session.session_id,
@@ -324,12 +434,16 @@ export async function POST(request: Request) {
           { status: 500 }
         );
       }
+      const tokensUsed = result.tokensUsed ?? 0;
+      if (tokensUsed > 0) await addTokenUsage(supabase, tokensUsed);
     }
 
     return NextResponse.json({
       session_id: result.session.session_id,
       artifact_count: result.artifacts.length,
       persisted: Boolean(supabase),
+      requested_medium: preferMedium ?? undefined,
+      artifact_medium: artifact.medium,
     });
   } catch (e) {
     return NextResponse.json(

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { SignOut } from "./sign-out";
 import { StudioChat } from "./components/studio-chat";
+import { RuntimePanel } from "./components/runtime-panel";
 
 export default function StudioHome() {
   return (
@@ -21,6 +22,9 @@ export default function StudioHome() {
         <Link href="/review/system">⚙️ System</Link>
         <SignOut />
       </nav>
+      <div style={{ marginTop: "1.5rem", maxWidth: 560 }}>
+        <RuntimePanel />
+      </div>
       <StudioChat />
     </main>
   );

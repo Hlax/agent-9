@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getSupabaseServer } from "@/lib/supabase-server";
+import { ConceptProposalActions } from "./concept-proposal-actions";
 
 const VIEWS = [
   { view: "queue", label: "Queue" },
@@ -48,7 +49,7 @@ export default async function ConceptsPage({
   return (
     <main style={{ maxWidth: 720, margin: "0 auto", padding: "1rem" }}>
       <p>
-        <Link href="/">← Twin</Link> · <Link href="/session">Session</Link> · <Link href="/review/artifacts">Artifact review</Link>
+        <Link href="/">← Twin</Link> · <Link href="/session">Session</Link> · <Link href="/review/artifacts">Artifact review</Link> · <Link href="/review/surface">Surface</Link>
       </p>
       <h1>Concept artifacts</h1>
       <p>
@@ -105,6 +106,7 @@ export default async function ConceptsPage({
                   {" · "}
                   {a.current_approval_state ?? "—"} · {new Date(a.created_at).toLocaleString()}
                 </p>
+                <ConceptProposalActions artifactId={a.artifact_id} />
               </li>
             ))}
           </ul>

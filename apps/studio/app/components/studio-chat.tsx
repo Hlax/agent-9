@@ -20,11 +20,27 @@ export function StudioChat() {
 
   const loadMessages = async () => {
     try {
-      const res = await fetch("/api/chat");
+      const res = await fetch(threadId ? `/api/chat?threadId=${encodeURIComponent(threadId)}` : "/api/chat");
       if (!res.ok) return;
       const data = await res.json();
       setMessages(data.messages ?? []);
       if (data.threadId) setThreadId(data.threadId);
+    } catch {
+      // ignore
+    }
+  };
+
+  const clearThread = async () => {
+    if (!threadId) return;
+    try {
+      const res = await fetch("/api/chat/clear-thread", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ threadId }),
+      });
+      if (res.ok) {
+        setMessages([]);
+      }
     } catch {
       // ignore
     }
@@ -87,7 +103,7 @@ export function StudioChat() {
       const res = await fetch("/api/session/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ promptContext }),
+        body: JSON.stringify({ promptContext, preferMedium: "writing" }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -102,8 +118,17 @@ export function StudioChat() {
 
   return (
     <section style={{ marginTop: "1.5rem", border: "1px solid #ccc", borderRadius: 8, overflow: "hidden", maxWidth: 560 }}>
-      <div style={{ padding: "0.5rem 0.75rem", background: "#f5f5f5", borderBottom: "1px solid #ccc", fontWeight: 600 }}>
-        Chat with Twin
+      <div style={{ padding: "0.5rem 0.75rem", background: "#f5f5f5", borderBottom: "1px solid #ccc", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ fontWeight: 600 }}>Chat with Twin</span>
+        {threadId && (
+          <button
+            type="button"
+            onClick={clearThread}
+            style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", borderRadius: 4, border: "1px solid #999", background: "#fff", cursor: "pointer" }}
+          >
+            New conversation
+          </button>
+        )}
       </div>
       <div
         ref={listRef}
@@ -171,7 +196,7 @@ export function StudioChat() {
             href="/session"
             style={{ fontSize: "0.85rem" }}
           >
-            Or go to <strong>Start session</strong> to run a full session (you can pass prompt there).
+            Or go to <strong>Start session</strong> to run a full session (prompt + writing/concept/image).
           </Link>
         )}
         {lastHarveyContent && (

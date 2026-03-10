@@ -90,6 +90,8 @@ Scheduled sessions should:
 - pause if a manual session is active
 - avoid running when review backlog is high
 
+**Always-on extension:** For runtime modes, scheduler behavior, drive/fatigue, and ecology (thread gravity, archive resurfacing, obsession candidates), see `creative_metabolism.md` and `creative_ecology.md`.
+
 ---
 
 # 3. Session Initialization

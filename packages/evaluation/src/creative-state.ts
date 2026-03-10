@@ -83,10 +83,12 @@ function noveltyScore(e: EvaluationSignal): number {
 /**
  * Update creative state after one artifact using evaluation signals.
  * Returns new state object; caller persists as creative_state_snapshot.
+ * If repetitionDetected is true, bumps reflection_need so next session tends to reflect.
  */
 export function updateCreativeState(
   prev: CreativeStateFields,
-  evaluation: EvaluationSignal
+  evaluation: EvaluationSignal,
+  repetitionDetected?: boolean
 ): CreativeStateFields {
   const pull = evaluation.pull_score ?? 0.5;
   const recurrence = evaluation.recurrence_score ?? 0.2;
@@ -119,6 +121,10 @@ export function updateCreativeState(
   }
   if (addedUnfinishedWork) {
     next.unfinished_projects = clamp(prev.unfinished_projects + 0.1);
+  }
+
+  if (repetitionDetected) {
+    next.reflection_need = clamp(Math.max(prev.reflection_need, 0.7));
   }
 
   return next;

@@ -51,11 +51,22 @@ export default async function SessionDetailPage({
         <h2>Artifacts</h2>
         {artifacts.length === 0 ? <p><em>None</em></p> : (
           <ul style={{ listStyle: "none", padding: 0 }}>
-            {(artifacts as Array<{ artifact_id: string; title: string; summary: string | null; medium: string; current_approval_state: string | null; alignment_score: number | null }>).map((a) => (
+            {(artifacts as Array<{ artifact_id: string; title: string; summary: string | null; medium: string; current_approval_state: string | null; alignment_score: number | null; content_uri: string | null; preview_uri: string | null; content_text: string | null }>).map((a) => (
               <li key={a.artifact_id} style={{ border: "1px solid #ddd", padding: "0.75rem", marginBottom: "0.5rem", borderRadius: 4 }}>
                 <strong>{a.title}</strong> · {a.medium} · {a.current_approval_state ?? "—"}
                 {a.alignment_score != null && <span> · alignment: {a.alignment_score.toFixed(2)}</span>}
-                {a.summary && <p style={{ margin: "0.25rem 0 0", fontSize: "0.9rem" }}>{a.summary}</p>}
+                {(a.medium === "image" && (a.preview_uri ?? a.content_uri)) ? (
+                  <div style={{ marginTop: "0.5rem" }}>
+                    <img
+                      src={a.preview_uri ?? a.content_uri ?? ""}
+                      alt={a.title}
+                      style={{ maxWidth: "100%", width: "auto", maxHeight: 360, objectFit: "contain", borderRadius: 6, background: "#f0f0f0" }}
+                    />
+                    {a.content_text && <p style={{ margin: "0.35rem 0 0", fontSize: "0.85rem", color: "#555" }}>{a.content_text.slice(0, 300)}{a.content_text.length > 300 ? "…" : ""}</p>}
+                  </div>
+                ) : a.summary ? (
+                  <p style={{ margin: "0.25rem 0 0", fontSize: "0.9rem" }}>{a.summary}</p>
+                ) : null}
               </li>
             ))}
           </ul>

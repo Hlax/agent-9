@@ -2,9 +2,22 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
+const ALLOWED_PROPOSAL_STATES = [
+  "archived",
+  "rejected",
+  "ignored",
+  "needs_revision",
+  "staged",
+  "approved_for_staging",
+  "approved_for_publication",
+  "published",
+] as const;
+
 /**
- * PATCH /api/proposals/[id] — update proposal (e.g. set proposal_state to archived).
- * Body: { proposal_state: 'archived' }.
+ * PATCH /api/proposals/[id] — update proposal state.
+ * Body: { proposal_state }.
+ * Negative: archived, rejected, ignored, needs_revision.
+ * Positive flow (concept-to-proposal): staged, approved_for_staging, approved_for_publication, published.
  */
 export async function PATCH(
   _request: Request,
@@ -17,8 +30,9 @@ export async function PATCH(
     if (!supabase) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
     const { id } = await params;
     const body = await _request.json().catch(() => ({}));
-    const proposal_state = body?.proposal_state === "archived" ? "archived" : null;
-    if (!proposal_state) return NextResponse.json({ error: "Only proposal_state: 'archived' is supported" }, { status: 400 });
+    const raw = body?.proposal_state;
+    const proposal_state = ALLOWED_PROPOSAL_STATES.includes(raw) ? raw : null;
+    if (!proposal_state) return NextResponse.json({ error: `proposal_state must be one of: ${ALLOWED_PROPOSAL_STATES.join(", ")}` }, { status: 400 });
 
     const { data, error } = await supabase
       .from("proposal_record")

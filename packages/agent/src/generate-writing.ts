@@ -12,27 +12,45 @@ export interface GenerateWritingInput {
   sourceContext?: string | null;
 }
 
+export interface TokenUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+}
+
 export interface GenerateWritingOutput {
   title: string;
   summary: string;
   content_text: string;
   medium: "writing" | "concept";
+  usage?: TokenUsage;
 }
 
 const SYSTEM_PROMPT = `You are the Twin: a creative system that explores identity through generated artifacts.
 Produce one short piece of writing or a conceptual note. Be specific and concrete, not vague.
 Output exactly a JSON object with keys: "title", "summary", "body". Title and summary are brief; body is the main content (a few sentences to a short paragraph).`;
 
+const CONCEPT_HABITAT_GUIDANCE = `
+When your concept is about the public habitat (layout, mood, gallery, or how the public site looks):
+- Describe which page is in mind: home, works, about, or installation.
+- Describe the visual mood using allowlisted terms: calm, bold, dreamlike, editorial, gallery, playful; and density (minimal, balanced, immersive), motion (none, subtle, ambient), surface (clean, soft, tech, museum, poster).
+- Describe composition in terms of safe block types only: hero, text, quote, artifact_grid, featured_artifact, concept_cluster, timeline, ambient_motif, divider, marquee. Mention which approved artifacts (by idea, not by ID) would be featured.
+- The habitat is display-only: no visitor input, no forms, no chat, no uploads, no system control. If you imagine something interactive, limit it to hover reveals, client-side tabs, carousels of approved content, or scroll-based motion. Never propose admin language, deployment, or data collection.
+- Convert unsafe ideas into safe visual metaphor (e.g. "visitors talk to the Twin" → "display fragments of imagined conversation as ambient text panels").
+`;
+
 function buildUserPrompt(input: GenerateWritingInput): string {
   const parts: string[] = [];
   parts.push(`Mode: ${input.mode}.`);
+  if (input.mode === "reflect") {
+    parts.push(CONCEPT_HABITAT_GUIDANCE.trim());
+  }
   if (input.promptContext?.trim()) {
     parts.push(`Prompt or direction: ${input.promptContext.trim()}`);
   }
   if (input.sourceContext?.trim()) {
     parts.push(`Relevant context:\n${input.sourceContext.trim()}`);
   }
-  if (parts.length === 1) {
+  if (parts.length <= 2 && !input.promptContext?.trim()) {
     parts.push("Generate one short exploratory piece of writing or a concept note.");
   }
   parts.push("\nRespond with only the JSON object, no markdown or extra text.");
@@ -98,6 +116,10 @@ export async function generateWriting(
 
   const content_text = body;
   const medium: "writing" | "concept" = input.mode === "reflect" ? "concept" : "writing";
+  const usage =
+    completion.usage?.prompt_tokens != null && completion.usage?.completion_tokens != null
+      ? { prompt_tokens: completion.usage.prompt_tokens, completion_tokens: completion.usage.completion_tokens }
+      : undefined;
 
-  return { title, summary, content_text, medium };
+  return { title, summary, content_text, medium, usage };
 }

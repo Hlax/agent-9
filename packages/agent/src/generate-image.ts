@@ -1,6 +1,6 @@
 /**
  * Image generation path: OpenAI Images API (DALL-E).
- * Uses OPENAI_MODEL_IMAGE (default gpt-5-nano; for OpenAI Images API use dall-e-3 or dall-e-2).
+ * When the user leaves the prompt empty, the Twin invents an image prompt from the seed (identity + sources).
  */
 
 import type { SessionMode } from "@twin/core";
@@ -8,7 +8,7 @@ import type { SessionMode } from "@twin/core";
 export interface GenerateImageInput {
   mode: SessionMode;
   promptContext?: string | null;
-  /** Optional: context for the image prompt. */
+  /** Optional: context for the image prompt (identity, sources, etc.). */
   sourceContext?: string | null;
 }
 
@@ -20,24 +20,59 @@ export interface GenerateImageOutput {
   medium: "image";
 }
 
-function buildImagePrompt(input: GenerateImageInput): string {
-  const parts: string[] = [];
-  if (input.promptContext?.trim()) {
-    parts.push(input.promptContext.trim());
+const IMAGE_PROMPT_SYSTEM = `You are the Twin: a creative system. Your task is to write a single, concrete image prompt for DALL-E (one or two sentences).
+The prompt should be visual and specific: style, mood, composition, and subject. No meta-commentary or "image of...". Output only the prompt text, nothing else.`;
+
+/**
+ * When the user did not provide a prompt, use GPT to invent one from the seed (sourceContext).
+ */
+async function generateImagePromptFromSeed(
+  sourceContext: string,
+  options: { apiKey: string }
+): Promise<string> {
+  const { OpenAI } = await import("openai");
+  const client = new OpenAI({ apiKey: options.apiKey });
+  const model = process.env.OPENAI_MODEL_CHAT ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+  const completion = await client.chat.completions.create({
+    model,
+    messages: [
+      { role: "system", content: IMAGE_PROMPT_SYSTEM },
+      {
+        role: "user",
+        content: `From this identity and source context, write one DALL-E image prompt that could only come from this Twin.\n\nContext:\n${sourceContext.slice(0, 1500)}`,
+      },
+    ],
+    max_tokens: 150,
+    temperature: 0.8,
+  });
+  const text = completion.choices[0]?.message?.content?.trim();
+  return text && text.length > 0 ? text : "A single evocative image that explores identity or creative expression.";
+}
+
+/**
+ * Build the final image prompt: use user's prompt if present, else seed-only text, or invent one via GPT when we have seed.
+ */
+async function resolveImagePrompt(
+  input: GenerateImageInput,
+  options: { apiKey: string }
+): Promise<string> {
+  const userPrompt = input.promptContext?.trim();
+  if (userPrompt) {
+    const parts = [userPrompt];
+    if (input.sourceContext?.trim()) {
+      parts.push(`Context: ${input.sourceContext.slice(0, 400)}`);
+    }
+    return parts.join(". ");
   }
   if (input.sourceContext?.trim()) {
-    parts.push(`Context: ${input.sourceContext.slice(0, 500)}`);
+    return generateImagePromptFromSeed(input.sourceContext, options);
   }
-  if (parts.length === 0) {
-    parts.push("A single evocative image that explores identity or creative expression.");
-  }
-  return parts.join(". ");
+  return "A single evocative image that explores identity or creative expression.";
 }
 
 /**
  * Call OpenAI Images API to generate one image artifact.
- * Returns title, summary, content_text (prompt), content_uri (temporary URL).
- * Caller should upload to Supabase Storage and replace content_uri for permanence.
+ * When prompt is empty, the Twin generates its own prompt from identity/sources (via GPT), then DALL-E draws it.
  */
 export async function generateImage(
   input: GenerateImageInput,
@@ -51,9 +86,8 @@ export async function generateImage(
   const { OpenAI } = await import("openai");
   const client = new OpenAI({ apiKey });
 
-  const prompt = buildImagePrompt(input);
-  const model =
-    process.env.OPENAI_MODEL_IMAGE ?? "gpt-5-nano";
+  const prompt = await resolveImagePrompt(input, { apiKey });
+  const model = process.env.OPENAI_MODEL_IMAGE ?? "dall-e-3";
 
   const response = await client.images.generate({
     model,
@@ -63,9 +97,8 @@ export async function generateImage(
     response_format: "url",
   });
 
-  const imageUrl = response.data[0]?.url ?? null;
-  const title =
-    input.promptContext?.slice(0, 100).trim() || "Generated image";
+  const imageUrl = response.data?.[0]?.url ?? null;
+  const title = input.promptContext?.slice(0, 100).trim() || "Generated image";
   const summary = prompt.slice(0, 300);
 
   return {

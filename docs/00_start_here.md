@@ -72,49 +72,51 @@ Read next to understand how the system behaves.
 9. `docs/02_runtime/memory_model.md`
 10. `docs/02_runtime/idea_lineage.md`
 11. `docs/02_runtime/archive_and_return.md`
-12. `docs/02_runtime/self_critique_system.md`
-13. `docs/02_runtime/evaluation_signals.md`
-14. `docs/02_runtime/judgment_flow.md`
+12. `docs/02_runtime/creative_metabolism.md` (Phase 1: runtime modes, scheduler, drive/fatigue, studio controls)
+13. `docs/02_runtime/creative_ecology.md` (Phase 2: thread gravity, archive resurfacing, obsession candidates, competition)
+14. `docs/02_runtime/self_critique_system.md`
+15. `docs/02_runtime/evaluation_signals.md`
+16. `docs/02_runtime/judgment_flow.md`
 
 ## Step 3 — Governance
 Read next to understand what must remain supervised.
 
-15. `docs/03_governance/approval_rules.md`
-16. `docs/03_governance/approval_state_machine.md`
-17. `docs/03_governance/intervention_rules.md`
-18. `docs/03_governance/change_record_system.md`
-19. `docs/03_governance/versioning_policy.md`
-20. `docs/03_governance/versioning_model.md`
-21. `docs/03_governance/runtime_invariants.md`
-22. `docs/03_governance/approval_lanes.md`
+17. `docs/03_governance/approval_rules.md`
+18. `docs/03_governance/approval_state_machine.md`
+19. `docs/03_governance/intervention_rules.md`
+20. `docs/03_governance/change_record_system.md`
+21. `docs/03_governance/versioning_policy.md`
+22. `docs/03_governance/versioning_model.md`
+23. `docs/03_governance/runtime_invariants.md`
+24. `docs/03_governance/approval_lanes.md`
 
 ## Step 4 — Product Surfaces
 Read next to understand where the system appears.
 
-23. `docs/04_product/product_overview.md`
-24. `docs/04_product/mvp_scope.md`
-25. `docs/04_product/private_studio.md`
-26. `docs/04_product/staging_habitat.md`
-27. `docs/04_product/public_habitat.md`
-28. `docs/04_product/release_archive.md`
-29. `docs/04_product/surface_release_model.md`
+25. `docs/04_product/product_overview.md`
+26. `docs/04_product/mvp_scope.md`
+27. `docs/04_product/private_studio.md`
+28. `docs/04_product/staging_habitat.md`
+29. `docs/04_product/public_habitat.md`
+30. `docs/04_product/release_archive.md`
+31. `docs/04_product/surface_release_model.md`
 
 ## Step 5 — Build and Execution
 Read next to scaffold the actual system.
 
-30. `docs/05_build/build_architecture.md`
-31. `docs/05_build/phase_4_build_contract.md`
-32. `docs/05_build/v1_vertical_slice.md`
-33. `docs/05_build/scaffolding_plan.md`
-34. `docs/05_build/identity_seed_ingestion.md`
-35. `docs/05_build/mind_test_spec.md`
+32. `docs/05_build/build_architecture.md`
+33. `docs/05_build/phase_4_build_contract.md`
+34. `docs/05_build/v1_vertical_slice.md`
+35. `docs/05_build/scaffolding_plan.md`
+36. `docs/05_build/identity_seed_ingestion.md`
+37. `docs/05_build/mind_test_spec.md`
 
 ## Step 6 — Agent Instructions
 Read last before coding.
 
-36. `docs/agents/cursor_agent_build_instructions.md`
-37. `docs/agents/coding_agent_architecture_rules.md`
-38. `docs/agents/agent_handoff_rules.md`
+38. `docs/agents/cursor_agent_build_instructions.md`
+39. `docs/agents/coding_agent_architecture_rules.md`
+40. `docs/agents/agent_handoff_rules.md`
 
 ---
 

@@ -1,0 +1,45 @@
+/**
+ * Stop limits and repetition detection for session run.
+ * Canon: system_architecture.md §15, creative_metabolism.md §7.
+ */
+
+export const DEFAULT_MAX_ARTIFACTS_PER_SESSION = 1;
+export const DEFAULT_MAX_TOKENS_PER_SESSION = 0; // 0 = no limit
+export const DEFAULT_REPETITION_WINDOW = 5;
+export const REPETITION_THRESHOLD = 4; // same outcome in >= this many of last N
+
+export function getMaxArtifactsPerSession(): number {
+  const v = process.env.MAX_ARTIFACTS_PER_SESSION;
+  if (v == null || v === "") return DEFAULT_MAX_ARTIFACTS_PER_SESSION;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n >= 1 ? n : DEFAULT_MAX_ARTIFACTS_PER_SESSION;
+}
+
+export function getMaxTokensPerSession(): number {
+  const v = process.env.MAX_TOKENS_PER_SESSION;
+  if (v == null || v === "") return DEFAULT_MAX_TOKENS_PER_SESSION;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MAX_TOKENS_PER_SESSION;
+}
+
+export function getRepetitionWindow(): number {
+  const v = process.env.REPETITION_WINDOW;
+  if (v == null || v === "") return DEFAULT_REPETITION_WINDOW;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n >= 2 ? n : DEFAULT_REPETITION_WINDOW;
+}
+
+/** Returns true if token count exceeds the session limit. */
+export function isOverTokenLimit(tokensUsed: number | undefined): boolean {
+  if (tokensUsed == null) return false;
+  const max = getMaxTokensPerSession();
+  return max > 0 && tokensUsed > max;
+}
+
+/** When tokens used (e.g. daily) >= this, scheduler auto-switches to slow. 0 = disabled. */
+export function getLowTokenThreshold(): number {
+  const v = process.env.LOW_TOKEN_THRESHOLD;
+  if (v == null || v === "") return 0;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}

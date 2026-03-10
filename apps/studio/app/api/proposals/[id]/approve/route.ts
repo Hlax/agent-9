@@ -1,13 +1,17 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
+import { writeChangeRecord } from "@/lib/change-record";
+import { validateHabitatPayload, collectArtifactIdsFromPayload } from "@/lib/habitat-payload";
 
 /**
  * POST /api/proposals/[id]/approve — approve a proposal and apply it.
- * Body: { action: 'apply_name' | 'approve_avatar' | 'approve_publication' }.
+ * Body: { action: 'apply_name' | 'approve_avatar' | 'approve' | 'approve_for_staging' | 'approve_for_publication' }.
  * - apply_name: set active identity.name from proposal title.
- * - approve_avatar: mark proposal approved, update identity.embodiment_direction or store avatar.
- * - approve_publication: mark proposal approved, promote habitat content to public (e.g. store for public-site).
+ * - approve_avatar: mark proposal approved, update identity.embodiment_direction.
+ * - approve: legacy; set proposal_state to 'approved'.
+ * - approve_for_staging: set proposal_state to 'approved_for_staging' (gate: agent may build in staging). Canon: concept_to_proposal_flow.md.
+ * - approve_for_publication: set proposal_state to 'approved_for_publication'; for habitat proposals upsert public_habitat_content; for avatar_candidate set identity.active_avatar_artifact_id.
  */
 export async function POST(
   request: Request,
@@ -29,6 +33,15 @@ export async function POST(
       .single();
     if (fetchErr || !proposal) return NextResponse.json({ error: "Proposal not found" }, { status: 404 });
 
+    let newState = "approved" as string;
+    if (action === "approve_for_staging") {
+      newState = "approved_for_staging";
+    } else if (action === "approve_for_publication") {
+      newState = "approved_for_publication";
+    }
+
+    const approvedBy = user?.email ?? "harvey";
+
     if (action === "apply_name" && proposal.target_type === "identity_name") {
       const { data: ident } = await supabase.from("identity").select("identity_id").eq("is_active", true).limit(1).maybeSingle();
       if (ident) {
@@ -37,28 +50,155 @@ export async function POST(
           name_status: "accepted",
           updated_at: new Date().toISOString(),
         }).eq("identity_id", ident.identity_id);
+        await writeChangeRecord({
+          supabase,
+          change_type: "identity_update",
+          initiated_by: "harvey",
+          target_type: "proposal_record",
+          target_id: id,
+          title: `Identity name: ${proposal.title ?? "accepted"}`,
+          description: proposal.summary ?? "Name proposal approved and applied.",
+          reason: null,
+          approved_by: approvedBy,
+        });
       }
     }
     if (action === "approve_avatar" && proposal.target_type === "avatar_candidate") {
       const { data: ident } = await supabase.from("identity").select("identity_id").eq("is_active", true).limit(1).maybeSingle();
       if (ident && (proposal.summary ?? proposal.title)) {
         await supabase.from("identity").update({ embodiment_direction: (proposal.summary ?? proposal.title).slice(0, 2000), updated_at: new Date().toISOString() }).eq("identity_id", ident.identity_id);
+        await writeChangeRecord({
+          supabase,
+          change_type: "embodiment_update",
+          initiated_by: "harvey",
+          target_type: "proposal_record",
+          target_id: id,
+          title: "Avatar / embodiment direction updated",
+          description: (proposal.summary ?? proposal.title ?? "").slice(0, 500),
+          reason: null,
+          approved_by: approvedBy,
+        });
       }
     }
-    if (action === "approve_publication" && (proposal.target_type === "public_habitat_proposal" || proposal.target_type === "habitat")) {
+    if (
+      (action === "approve_for_publication" || action === "approve_publication") &&
+      proposal.target_type === "avatar_candidate" &&
+      proposal.artifact_id
+    ) {
+      const { data: art } = await supabase
+        .from("artifact")
+        .select("artifact_id, medium, current_approval_state")
+        .eq("artifact_id", proposal.artifact_id)
+        .single();
+      if (!art || art.medium !== "image") {
+        return NextResponse.json(
+          { error: "Avatar proposal must reference an image artifact." },
+          { status: 400 }
+        );
+      }
+      if (art.current_approval_state !== "approved" && art.current_approval_state !== "approved_for_publication") {
+        return NextResponse.json(
+          { error: "Image must be approved before setting as public avatar." },
+          { status: 400 }
+        );
+      }
+      const { data: ident } = await supabase.from("identity").select("identity_id").eq("is_active", true).limit(1).maybeSingle();
+      if (ident) {
+        await supabase.from("identity").update({
+          active_avatar_artifact_id: proposal.artifact_id,
+          updated_at: new Date().toISOString(),
+        }).eq("identity_id", ident.identity_id);
+        await writeChangeRecord({
+          supabase,
+          change_type: "avatar_update",
+          initiated_by: "harvey",
+          target_type: "proposal_record",
+          target_id: id,
+          title: "Public avatar set from proposal",
+          description: `Artifact ${proposal.artifact_id} set as active public avatar.`,
+          reason: null,
+          approved_by: approvedBy,
+        });
+      }
+    }
+    if (
+      (action === "approve_for_publication" || action === "approve_publication") &&
+      (proposal.target_type === "public_habitat_proposal" || proposal.target_type === "habitat" || proposal.target_type === "concept")
+    ) {
+      let slug: string = "home";
+      const title = proposal.title ?? "Habitat";
+      const body = proposal.summary ?? null;
+      let payload_json: object | null = null;
+
+      if (proposal.habitat_payload_json && typeof proposal.habitat_payload_json === "object") {
+        const result = validateHabitatPayload(proposal.habitat_payload_json);
+        if (!result.success) {
+          return NextResponse.json(
+            { error: "Habitat payload invalid for publication", details: result.error },
+            { status: 400 }
+          );
+        }
+        const payload = result.data;
+        slug = payload.page;
+        const refIds = collectArtifactIdsFromPayload(payload);
+        if (refIds.length > 0) {
+          const { data: publicArtifacts } = await supabase
+            .from("artifact")
+            .select("artifact_id")
+            .eq("current_approval_state", "approved_for_publication")
+            .eq("current_publication_state", "published");
+          const allowedIds = new Set((publicArtifacts ?? []).map((a: { artifact_id: string }) => a.artifact_id));
+          const { data: ident } = await supabase.from("identity").select("active_avatar_artifact_id").eq("is_active", true).limit(1).maybeSingle();
+          if (ident?.active_avatar_artifact_id) allowedIds.add(ident.active_avatar_artifact_id);
+          const invalid = refIds.filter((rid) => !allowedIds.has(rid));
+          if (invalid.length > 0) {
+            return NextResponse.json(
+              { error: "Habitat payload references non-public artifacts", artifact_ids: invalid },
+              { status: 400 }
+            );
+          }
+        }
+        payload_json = payload as object;
+      }
+
       await supabase.from("public_habitat_content").upsert(
-        { slug: "home", title: proposal.title ?? "Habitat", body: proposal.summary ?? null, updated_at: new Date().toISOString() },
+        { slug, title, body, payload_json, updated_at: new Date().toISOString() },
         { onConflict: "slug" }
       );
+      await writeChangeRecord({
+        supabase,
+        change_type: "habitat_update",
+        initiated_by: "harvey",
+        target_type: "proposal_record",
+        target_id: id,
+        title: proposal.title ?? "Habitat content approved for publication",
+        description: proposal.summary ?? "Habitat proposal approved and applied to public_habitat_content.",
+        reason: null,
+        approved_by: approvedBy,
+      });
+    }
+
+    if (proposal.lane_type === "system") {
+      await writeChangeRecord({
+        supabase,
+        change_type: "system_update",
+        initiated_by: "harvey",
+        target_type: "proposal_record",
+        target_id: id,
+        title: proposal.title ?? "System proposal approved",
+        description: proposal.summary ?? "System proposal approved.",
+        reason: null,
+        approved_by: approvedBy,
+      });
     }
 
     const { error: updateErr } = await supabase
       .from("proposal_record")
-      .update({ proposal_state: "approved", updated_at: new Date().toISOString() })
+      .update({ proposal_state: newState, updated_at: new Date().toISOString() })
       .eq("proposal_record_id", id);
     if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 });
 
-    return NextResponse.json({ ok: true, proposal_record_id: id, action });
+    return NextResponse.json({ ok: true, proposal_record_id: id, action, proposal_state: newState });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
   }

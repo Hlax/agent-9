@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { createClient } from "@/lib/supabase/server";
 import { REQUIRED_APPROVAL_FOR_PUBLISH } from "@/lib/governance-rules";
+import { passesStagingGate } from "@/lib/publish-gate";
 
 /**
  * POST /api/artifacts/[id]/publish — set artifact publication state to published.
@@ -57,6 +58,21 @@ export async function POST(
         {
           error:
             "Artifact must be approved_for_publication before publishing. Approval is not publication.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const { data: proposals } = await supabase
+      .from("proposal_record")
+      .select("proposal_state")
+      .eq("artifact_id", artifactId);
+    const list = Array.isArray(proposals) ? proposals : [];
+    if (!passesStagingGate(list)) {
+      return NextResponse.json(
+        {
+          error:
+            "Artifact has linked proposals but none have passed staging. Approve for staging (or later) before publishing.",
         },
         { status: 400 }
       );

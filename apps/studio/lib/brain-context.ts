@@ -144,6 +144,12 @@ export interface IdentityStabilityForContext {
   score: number;
 }
 
+/** Optional naming readiness when not yet stored on identity (e.g. evaluated on-demand in chat). */
+export interface NamingReadinessForContext {
+  score: number;
+  notes: string;
+}
+
 function sliceToBudget(s: string, budget: number): string {
   if (s.length <= budget) return s;
   return s.slice(0, budget).trim();
@@ -154,10 +160,12 @@ function sliceToBudget(s: string, budget: number): string {
  * gets up to CHAT_CONTEXT_BUDGET.source chars so it is not crowded out by identity/memory.
  * Session/generation path continues to use buildWorkingContextString (full context).
  * Optionally include identityStability (computed in chat route) in the identity segment.
+ * When name is not accepted, namingReadinessOverride (if provided) is used so the Twin always sees a score.
  */
 export function buildChatContextWithBudget(
   ctx: BrainContextResult,
-  identityStability?: IdentityStabilityForContext | null
+  identityStability?: IdentityStabilityForContext | null,
+  namingReadinessOverride?: NamingReadinessForContext | null
 ): string {
   const parts: string[] = [];
 
@@ -171,9 +179,11 @@ export function buildChatContextWithBudget(
     if (id.philosophy) line.push(`Philosophy: ${id.philosophy.slice(0, 300)}`);
     if (id.embodiment_direction) line.push(`Embodiment direction: ${id.embodiment_direction.slice(0, 200)}`);
     if (id.habitat_direction) line.push(`Habitat direction: ${id.habitat_direction.slice(0, 200)}`);
-    if (!nameAccepted && (id.naming_readiness_score != null || id.naming_readiness_notes)) {
+    if (!nameAccepted) {
+      const score = namingReadinessOverride?.score ?? id.naming_readiness_score ?? null;
+      const notes = namingReadinessOverride?.notes ?? id.naming_readiness_notes ?? "";
       line.push(
-        `Naming readiness: score=${id.naming_readiness_score ?? "—"}, notes=${(id.naming_readiness_notes ?? "").slice(0, 200)}`
+        `Naming readiness: score=${score != null ? score : "—"}, notes=${(notes || "").slice(0, 200)}`
       );
     }
     if (identityStability != null) {

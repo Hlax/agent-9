@@ -31,6 +31,8 @@ export interface SessionContext {
 export interface SessionPipelineResult {
   session: CreativeSession;
   artifacts: Artifact[];
+  /** Total tokens used this session (prompt + completion) when available. */
+  tokensUsed?: number;
 }
 
 /**
@@ -87,6 +89,10 @@ export async function runSessionPipeline(
 
   const medium: ArtifactMedium = generated.medium;
   const contentUri = preferImage && "content_uri" in generated ? generated.content_uri : null;
+  const tokensUsed =
+    "usage" in generated && generated.usage
+      ? generated.usage.prompt_tokens + generated.usage.completion_tokens
+      : undefined;
   const artifact: Artifact = {
     artifact_id: crypto.randomUUID(),
     project_id: context.projectId ?? null,
@@ -114,5 +120,5 @@ export async function runSessionPipeline(
 
   session.ended_at = new Date().toISOString();
 
-  return { session, artifacts: [artifact] };
+  return { session, artifacts: [artifact], tokensUsed };
 }

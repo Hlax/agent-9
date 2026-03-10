@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
+import { capSummaryTo200Words } from "@/lib/habitat-payload";
 
 /**
  * GET /api/proposals — list proposals. Query: lane_type, target_type.
@@ -18,8 +19,20 @@ export async function GET(request: Request) {
     const proposal_state = searchParams.get("proposal_state");
     let query = supabase.from("proposal_record").select("*").order("created_at", { ascending: false }).limit(50);
     if (lane_type) query = query.eq("lane_type", lane_type);
-    if (target_type) query = query.eq("target_type", target_type);
-    if (proposal_state) query = query.eq("proposal_state", proposal_state);
+    if (target_type) {
+      const types = target_type.split(",").map((t) => t.trim()).filter(Boolean);
+      if (types.length > 1) query = query.in("target_type", types);
+      else if (types.length === 1) query = query.eq("target_type", types[0]);
+    }
+    if (proposal_state) {
+      if (proposal_state === "archived") {
+        query = query.in("proposal_state", ["archived", "rejected", "ignored"]);
+      } else if (proposal_state === "approved") {
+        query = query.in("proposal_state", ["approved", "approved_for_staging", "approved_for_publication"]);
+      } else {
+        query = query.eq("proposal_state", proposal_state);
+      }
+    }
     const { data, error } = await query;
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ proposals: data ?? [] });
@@ -38,12 +51,16 @@ export async function POST(request: Request) {
     const lane_type = body?.lane_type ?? "surface";
     const target_type = body?.target_type ?? "concept";
     const title = typeof body?.title === "string" ? body.title.trim() : "";
-    const summary = typeof body?.summary === "string" ? body.summary : null;
+    const rawSummary = typeof body?.summary === "string" ? body.summary : null;
+    const summary = rawSummary ? capSummaryTo200Words(rawSummary) : null;
     const target_id = body?.target_id ?? null;
+    const artifact_id = body?.artifact_id ?? null;
+    const target_surface = typeof body?.target_surface === "string" ? body.target_surface : null;
+    const proposal_type = typeof body?.proposal_type === "string" ? body.proposal_type : null;
     const preview_uri = body?.preview_uri ?? null;
     const created_by = body?.created_by ?? (user?.email ?? "harvey");
     if (!title) return NextResponse.json({ error: "title is required" }, { status: 400 });
-    const row = {
+    const row: Record<string, unknown> = {
       lane_type,
       target_type,
       target_id,
@@ -56,6 +73,9 @@ export async function POST(request: Request) {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
+    if (artifact_id != null) row.artifact_id = artifact_id;
+    if (target_surface != null) row.target_surface = target_surface;
+    if (proposal_type != null) row.proposal_type = proposal_type;
     const { data, error } = await supabase.from("proposal_record").insert(row).select("proposal_record_id").single();
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ proposal_record_id: data?.proposal_record_id, ...row });

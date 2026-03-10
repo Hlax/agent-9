@@ -1,5 +1,7 @@
 # Identity-Governance Pass — Code Audit (A–D)
 
+**Identity proposal → canon:** For status vs the full external “identity proposal canon” design (name vs traits/philosophy/motifs/concept definitions, identity_proposal/identity_canon tables), see `docs/03_governance/identity_proposal_canon_status.md`.
+
 ## A) Naming readiness — what already exists
 
 | Piece | Location | What it does |

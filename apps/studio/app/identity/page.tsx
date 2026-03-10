@@ -48,12 +48,17 @@ export default async function IdentityPage() {
           {identity.name_status && (
             <p style={{ fontSize: "0.85rem", color: "#666" }}>
               Name status: {identity.name_status}
-              {identity.naming_readiness_score != null && ` · Readiness: ${Number(identity.naming_readiness_score).toFixed(2)}`}
             </p>
           )}
-          {identity.naming_readiness_notes && (
-            <p style={{ fontSize: "0.85rem", color: "#555", maxWidth: 480 }}>{identity.naming_readiness_notes}</p>
-          )}
+          <section style={{ marginTop: "0.5rem", marginBottom: "0.5rem" }}>
+            <p style={{ fontSize: "0.9rem", fontWeight: 600, marginBottom: "0.25rem" }}>Naming readiness</p>
+            <p style={{ fontSize: "0.85rem", color: "#666" }}>
+              Score: {identity.naming_readiness_score != null ? Number(identity.naming_readiness_score).toFixed(2) : "Not evaluated"}
+            </p>
+            {identity.naming_readiness_notes && (
+              <p style={{ fontSize: "0.85rem", color: "#555", maxWidth: 480 }}>{identity.naming_readiness_notes}</p>
+            )}
+          </section>
         </>
       ) : (
         <p style={{ fontSize: "0.9rem", color: "#666" }}>
