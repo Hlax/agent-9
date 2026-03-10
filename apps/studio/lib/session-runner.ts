@@ -678,6 +678,34 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
     if (memError) {
       throw new SessionRunError(500, { error: `Memory record insert failed: ${memError.message}` });
     }
+
+    // A-2: Recurrence writeback — propagate evaluation.recurrence_score to the selected idea and thread.
+    // Uses direct overwrite (smaller scope than EWA for this PR). Failures are soft-logged and do not abort the session.
+    if (selectedIdeaId) {
+      const { error: ideaRecurrenceError } = await supabase
+        .from("idea")
+        .update({ recurrence_score: evaluation.recurrence_score, updated_at: new Date().toISOString() })
+        .eq("idea_id", selectedIdeaId);
+      if (ideaRecurrenceError) {
+        console.warn("[session] recurrence writeback failed for idea", {
+          idea_id: selectedIdeaId,
+          error: ideaRecurrenceError.message,
+        });
+      }
+    }
+    if (selectedThreadId) {
+      const { error: threadRecurrenceError } = await supabase
+        .from("idea_thread")
+        .update({ recurrence_score: evaluation.recurrence_score, updated_at: new Date().toISOString() })
+        .eq("idea_thread_id", selectedThreadId);
+      if (threadRecurrenceError) {
+        console.warn("[session] recurrence writeback failed for idea_thread", {
+          idea_thread_id: selectedThreadId,
+          error: threadRecurrenceError.message,
+        });
+      }
+    }
+
     const tokensUsedForRecord = "tokensUsed" in result && typeof result.tokensUsed === "number" ? result.tokensUsed : 0;
     if (tokensUsedForRecord > 0) await addTokenUsage(supabase, tokensUsedForRecord);
 
