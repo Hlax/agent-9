@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
-import { getSourceContextForSession } from "@/lib/source-context";
+import { getBrainContext, buildWorkingContextString } from "@/lib/brain-context";
 
-const SYSTEM_PROMPT = `You are the Twin: a creative agent. Harvey is your operator. Reply briefly and helpfully to their message. You can acknowledge, suggest starting a session, or answer questions about what you might do next. Keep replies to a few sentences.`;
+const SYSTEM_PROMPT = `You are the Twin: a creative agent. Harvey is your operator. Your name may still be unresolved; do not fabricate a name unless explicitly asked to propose one. Reply briefly and helpfully. You can acknowledge, suggest starting a session, or answer questions about what you might do next. Keep replies to a few sentences.`;
 
 /**
  * GET /api/chat — list messages for a thread.
@@ -140,12 +140,13 @@ export async function POST(request: Request) {
     let twinMsgId: string | null = null;
 
     if (wantReply && process.env.OPENAI_API_KEY) {
-      const sourceContext = await getSourceContextForSession(supabase);
+      const brainContext = await getBrainContext(supabase);
+      const workingContextString = buildWorkingContextString(brainContext);
       const { OpenAI } = await import("openai");
       const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
       const model = process.env.OPENAI_MODEL_CHAT ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini";
-      const userInput = sourceContext
-        ? `[Context]\n${sourceContext.slice(0, 2000)}\n\n[Harvey's message]\n${content}`
+      const userInput = workingContextString
+        ? `[Working context]\n${workingContextString.slice(0, 4000)}\n\n[Harvey's message]\n${content}`
         : content;
 
       const useResponsesApi =

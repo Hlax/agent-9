@@ -103,6 +103,7 @@ export function buildWorkingContextString(ctx: BrainContextResult): string {
     const id = ctx.identity;
     if (id.name) parts.push(`Identity name: ${id.name}`);
     if (id.summary) parts.push(`Summary: ${id.summary.slice(0, 300)}`);
+    if (id.philosophy) parts.push(`Philosophy: ${id.philosophy.slice(0, 300)}`);
     if (id.embodiment_direction) parts.push(`Embodiment direction: ${id.embodiment_direction.slice(0, 200)}`);
     if (id.habitat_direction) parts.push(`Habitat direction: ${id.habitat_direction.slice(0, 200)}`);
   }
