@@ -254,11 +254,12 @@ export async function POST(request: Request) {
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: userInput },
         ];
+        const isNewStyleModel = /gpt-4\.1|o1-|o3-|o4-|gpt-5/i.test(model);
         const completion = await client.chat.completions.create({
           model,
           messages,
           temperature: 0.7,
-          max_tokens: 500,
+          ...(isNewStyleModel ? {} : { max_tokens: 500 }),
         });
         replyContent = completion.choices[0]?.message?.content?.trim() ?? null;
       }

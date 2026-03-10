@@ -33,6 +33,7 @@ async function generateImagePromptFromSeed(
   const { OpenAI } = await import("openai");
   const client = new OpenAI({ apiKey: options.apiKey });
   const model = process.env.OPENAI_MODEL_CHAT ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+  const isNewStyleModel = /gpt-4\.1|o1-|o3-|o4-|gpt-5/i.test(model);
   const completion = await client.chat.completions.create({
     model,
     messages: [
@@ -42,7 +43,7 @@ async function generateImagePromptFromSeed(
         content: `From this identity and source context, write one DALL-E image prompt that could only come from this Twin.\n\nContext:\n${sourceContext.slice(0, 1500)}`,
       },
     ],
-    max_tokens: 150,
+    ...(isNewStyleModel ? {} : { max_tokens: 150 }),
     temperature: 0.8,
   });
   const text = completion.choices[0]?.message?.content?.trim();
