@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { HabitatProposalList, HabitatProposalTabs } from "./habitat-proposal-list";
+import { LiveHabitatPages } from "./live-habitat-pages";
 
 export default async function HabitatProposalReviewPage({
   searchParams,
@@ -16,6 +17,7 @@ export default async function HabitatProposalReviewPage({
       <p>
         <Link href="/review/surface">← Surface</Link>
       </p>
+      <LiveHabitatPages />
       <HabitatProposalTabs view={view} />
       <section>
         <HabitatProposalList view={view} />
