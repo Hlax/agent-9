@@ -24,7 +24,17 @@ export async function GET(request: Request) {
   // can still pass x-cron-secret; it is forwarded to /api/session/run.
 
   const cronSecret = request.headers.get(CRON_SECRET_HEADER);
-  if (process.env.CRON_SECRET && cronSecret !== process.env.CRON_SECRET) {
+  const isVercelCron = request.headers.get("x-vercel-cron") === "1";
+  const hasEnvSecret = !!process.env.CRON_SECRET;
+  const hasHeaderSecret = !!cronSecret;
+
+  console.log("[cron/session] auth", {
+    isVercelCron,
+    hasEnvSecret,
+    hasHeaderSecret,
+  });
+
+  if (hasEnvSecret && !isVercelCron && cronSecret !== process.env.CRON_SECRET) {
     console.log("[cron/session] unauthorized: missing or invalid cron secret");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
