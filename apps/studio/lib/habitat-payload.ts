@@ -135,13 +135,9 @@ export type AmbientMotifBlock = z.infer<typeof AmbientMotifBlockSchema>;
 export type DividerBlock = z.infer<typeof DividerBlockSchema>;
 export type MarqueeBlock = z.infer<typeof MarqueeBlockSchema>;
 
-export interface ValidateHabitatPayloadResult {
-  success: true;
-  data: HabitatProposalPayload;
-} | {
-  success: false;
-  error: string;
-}
+export type ValidateHabitatPayloadResult =
+  | { success: true; data: HabitatProposalPayload }
+  | { success: false; error: string };
 
 /**
  * Validate a habitat proposal payload. Rejects unknown blocks, extra fields, oversized payload.

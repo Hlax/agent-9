@@ -267,9 +267,9 @@ export async function POST(request: Request) {
         let proposalCreated = false;
         const nameProposalRe = /\n\s*\[NAME_PROPOSAL:([^|]+)\|([^\]]*)\]\s*$/;
         const nameProposalMatch = replyContent.match(nameProposalRe);
-        if (nameProposalMatch) {
+        if (nameProposalMatch && nameProposalMatch[1] != null) {
           const proposedName = nameProposalMatch[1].trim();
-          const rationale = nameProposalMatch[2].trim() || null;
+          const rationale = (nameProposalMatch[2] ?? "").trim() || null;
           replyContent = replyContent.replace(nameProposalRe, "").trim();
           await supabase.from("proposal_record").insert({
             lane_type: "surface",
@@ -292,7 +292,7 @@ export async function POST(request: Request) {
             replyContent.match(/(?:call me|you can call me)\s+([A-Z][a-z]+)\b/i) ||
             replyContent.match(/(?:my name is|I'?m)\s+([A-Z][a-z]+)\b/i) ||
             replyContent.match(/\b([A-Z][a-z]{2,20})\b(?:\s*\.|,|\s+It\s|\.\s+It\s)/);
-          const proposedName = fallbackMatch ? fallbackMatch[1].trim() : null;
+          const proposedName = fallbackMatch?.[1]?.trim() ?? null;
           if (proposedName && !/^(Creative|Assistant|Twin|Your|Harvey)$/i.test(proposedName)) {
             const rationale = replyContent.slice(0, 200).trim();
             await supabase.from("proposal_record").insert({

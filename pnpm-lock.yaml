@@ -120,13 +120,16 @@ importers:
         version: 15.0.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       openai:
         specifier: ^6.0.0
-        version: 6.27.0(ws@8.19.0)
+        version: 6.27.0(ws@8.19.0)(zod@3.25.76)
       react:
         specifier: ^18.3.1
         version: 18.3.1
       react-dom:
         specifier: ^18.3.1
         version: 18.3.1(react@18.3.1)
+      zod:
+        specifier: ^3.23.0
+        version: 3.25.76
     devDependencies:
       '@types/node':
         specifier: ^22.9.0
@@ -157,7 +160,7 @@ importers:
         version: link:../core
       openai:
         specifier: ^4.73.0
-        version: 4.104.0(ws@8.19.0)
+        version: 4.104.0(ws@8.19.0)(zod@3.25.76)
     devDependencies:
       '@types/node':
         specifier: ^22.9.0
@@ -185,7 +188,7 @@ importers:
         version: link:../core
       openai:
         specifier: ^4.73.0
-        version: 4.104.0(ws@8.19.0)
+        version: 4.104.0(ws@8.19.0)(zod@3.25.76)
     devDependencies:
       '@types/node':
         specifier: ^22.9.0
@@ -2769,6 +2772,9 @@ packages:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
 
+  zod@3.25.76:
+    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+
 snapshots:
 
   '@emnapi/core@1.8.1':
@@ -4685,7 +4691,7 @@ snapshots:
       define-properties: 1.2.1
       es-object-atoms: 1.1.1
 
-  openai@4.104.0(ws@8.19.0):
+  openai@4.104.0(ws@8.19.0)(zod@3.25.76):
     dependencies:
       '@types/node': 18.19.130
       '@types/node-fetch': 2.6.13
@@ -4696,12 +4702,14 @@ snapshots:
       node-fetch: 2.7.0
     optionalDependencies:
       ws: 8.19.0
+      zod: 3.25.76
     transitivePeerDependencies:
       - encoding
 
-  openai@6.27.0(ws@8.19.0):
+  openai@6.27.0(ws@8.19.0)(zod@3.25.76):
     optionalDependencies:
       ws: 8.19.0
+      zod: 3.25.76
 
   optionator@0.9.4:
     dependencies:
@@ -5402,3 +5410,5 @@ snapshots:
   yallist@5.0.0: {}
 
   yocto-queue@0.1.0: {}
+
+  zod@3.25.76: {}

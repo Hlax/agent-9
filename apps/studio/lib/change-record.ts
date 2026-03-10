@@ -11,6 +11,7 @@ const CHANGE_TYPES = [
   "system_update",
   "habitat_update",
   "embodiment_update",
+  "avatar_update",
   "evaluation_update",
   "governance_update",
   "other",

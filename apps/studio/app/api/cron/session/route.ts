@@ -73,7 +73,7 @@ export async function GET(request: Request) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      [CRON_SECRET_HEADER]: process.env.CRON_SECRET,
+      [CRON_SECRET_HEADER]: process.env.CRON_SECRET ?? "",
     },
     body: JSON.stringify({}),
   });

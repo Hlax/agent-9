@@ -12,7 +12,7 @@ const ALLOWED_SOURCE_ROLES = ["identity_seed", "reference", "inspiration", "cont
  */
 function extractTitle(html: string): string | null {
   const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  if (!match) return null;
+  if (!match || match[1] == null) return null;
   return match[1]
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
@@ -29,7 +29,7 @@ function htmlToText(html: string): string {
     .replace(/<style\b[\s\S]*?<\/style>/gi, "")
     .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, "");
   const bodyMatch = text.match(/<body\b[\s\S]*?>([\s\S]*?)<\/body>/i);
-  if (bodyMatch) text = bodyMatch[1];
+  if (bodyMatch && bodyMatch[1] != null) text = bodyMatch[1];
   text = text
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/gi, " ")

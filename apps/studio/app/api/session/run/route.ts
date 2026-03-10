@@ -107,12 +107,13 @@ export async function POST(request: Request) {
       { openaiApiKey: process.env.OPENAI_API_KEY ?? undefined }
     );
 
-    if (isOverTokenLimit(result.tokensUsed)) {
+    const tokensUsed = "tokensUsed" in result && typeof result.tokensUsed === "number" ? result.tokensUsed : undefined;
+    if (isOverTokenLimit(tokensUsed)) {
       return NextResponse.json(
         {
           error: "Token limit exceeded; session aborted.",
           session_id: result.session.session_id,
-          tokens_used: result.tokensUsed,
+          tokens_used: tokensUsed,
         },
         { status: 400 }
       );
@@ -389,7 +390,9 @@ export async function POST(request: Request) {
         );
       }
 
-      const nextState = updateCreativeState(previousState, evaluation, repetitionDetected);
+      const nextState = (
+        updateCreativeState as (prev: Parameters<typeof updateCreativeState>[0], evalSig: Parameters<typeof updateCreativeState>[1], repetition?: boolean) => ReturnType<typeof updateCreativeState>
+      )(previousState, evaluation, repetitionDetected);
       const stateSnapshotRow = stateToSnapshotRow(
         nextState,
         result.session.session_id,
@@ -434,8 +437,8 @@ export async function POST(request: Request) {
           { status: 500 }
         );
       }
-      const tokensUsed = result.tokensUsed ?? 0;
-      if (tokensUsed > 0) await addTokenUsage(supabase, tokensUsed);
+      const tokensUsedForRecord = "tokensUsed" in result && typeof result.tokensUsed === "number" ? result.tokensUsed : 0;
+      if (tokensUsedForRecord > 0) await addTokenUsage(supabase, tokensUsedForRecord);
     }
 
     return NextResponse.json({
