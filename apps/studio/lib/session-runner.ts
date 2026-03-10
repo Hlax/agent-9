@@ -32,6 +32,7 @@ import {
 } from "@/lib/stop-limits";
 import { detectRepetition } from "@/lib/repetition-detection";
 import { addTokenUsage, getRuntimeConfig } from "@/lib/runtime-config";
+import { createArchiveEntry } from "@twin/memory";
 
 /** Create bucket "artifacts" in Supabase Dashboard → Storage if missing. */
 const ARTIFACTS_BUCKET = "artifacts";
@@ -446,6 +447,28 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       .eq("artifact_id", artifact.artifact_id);
     if (artifactUpdateError) {
       throw new SessionRunError(500, { error: `Artifact update failed: ${artifactUpdateError.message}` });
+    }
+
+    // A-3: Archive loop — when critique marks this artifact as an archive candidate, create an archive_entry
+    // so future return-mode sessions can select from autonomously generated archive history.
+    if (critique.critique_outcome === "archive_candidate") {
+      const archiveEntry = createArchiveEntry({
+        project_id: selectedProjectId ?? artifact.project_id,
+        artifact_id: artifact.artifact_id,
+        idea_id: selectedIdeaId ?? artifact.primary_idea_id,
+        idea_thread_id: selectedThreadId ?? artifact.primary_thread_id,
+        reason_paused: critique.overall_summary?.slice(0, 500) ?? "archive_candidate",
+        creative_pull: evaluation.pull_score,
+        recurrence_score: evaluation.recurrence_score,
+        last_session_id: result.session.session_id,
+      });
+      const { error: archiveError } = await supabase.from("archive_entry").insert(archiveEntry);
+      if (archiveError) {
+        console.warn("[session] archive_entry insert failed", {
+          artifact_id: artifact.artifact_id,
+          error: archiveError.message,
+        });
+      }
     }
 
     // Concept-to-proposal: if concept artifact is eligible, create or refresh a habitat layout proposal
