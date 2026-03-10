@@ -11,3 +11,4 @@ build/
 *.tsbuildinfo
 supabase/.branches
 supabase/.temp
+backups/

@@ -11,8 +11,11 @@
     "dev:public": "pnpm --filter public-site dev",
     "lint": "pnpm -r run lint",
     "db:generate": "pnpm exec supabase gen types typescript --local -o packages/core/src/db-types.ts",
+    "db:backup": "node scripts/db-backup.js",
     "db:migrate": "pnpm exec supabase db push",
     "db:reset": "pnpm exec supabase db reset",
+    "db:wipe": "pnpm run db:reset",
+    "db:wipe:linked": "pnpm exec supabase db reset --linked",
     "db:verify": "pnpm exec supabase db reset"
   },
   "packageManager": "pnpm@9.14.2",
