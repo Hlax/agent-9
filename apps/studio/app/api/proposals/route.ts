@@ -17,12 +17,18 @@ export async function GET(request: Request) {
     const lane_type = searchParams.get("lane_type");
     const target_type = searchParams.get("target_type");
     const proposal_state = searchParams.get("proposal_state");
+    const proposal_role = searchParams.get("proposal_role");
     let query = supabase.from("proposal_record").select("*").order("created_at", { ascending: false }).limit(50);
     if (lane_type) query = query.eq("lane_type", lane_type);
     if (target_type) {
       const types = target_type.split(",").map((t) => t.trim()).filter(Boolean);
       if (types.length > 1) query = query.in("target_type", types);
       else if (types.length === 1) query = query.eq("target_type", types[0]);
+    }
+    if (proposal_role) {
+      const roles = proposal_role.split(",").map((t) => t.trim()).filter(Boolean);
+      if (roles.length > 1) query = query.in("proposal_role", roles);
+      else if (roles.length === 1) query = query.eq("proposal_role", roles[0]);
     }
     if (proposal_state) {
       if (proposal_state === "archived") {

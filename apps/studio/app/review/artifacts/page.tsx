@@ -10,16 +10,24 @@ const VIEWS = [
   { view: "archived", label: "Archived" },
 ] as const;
 
+const ROLE_FILTERS = [
+  { role: "all", label: "All" },
+  { role: "layout_concept", label: "Layout concepts" },
+  { role: "image_concept", label: "Image concepts" },
+] as const;
+
 /**
  * Artifact review: Queue (pending/needs_revision), Approved, or Archived.
  */
 export default async function ArtifactReviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ view?: string }>;
+  searchParams: Promise<{ view?: string; role?: string }>;
 }) {
   const params = await searchParams;
   const view = (params.view === "approved" || params.view === "archived" ? params.view : "queue") as "queue" | "approved" | "archived";
+  const roleParam = (params.role ?? "all") as string;
+  const activeRole = ROLE_FILTERS.some((r) => r.role === roleParam) ? roleParam : "all";
 
   const supabase = getSupabaseServer();
   let list: {
@@ -27,6 +35,7 @@ export default async function ArtifactReviewPage({
     title: string;
     summary: string | null;
     medium: string;
+    artifact_role?: string | null;
     current_approval_state: string;
     current_publication_state: string | null;
     created_at: string;
@@ -39,7 +48,7 @@ export default async function ArtifactReviewPage({
   if (supabase) {
     let query = supabase
       .from("artifact")
-      .select("artifact_id, title, summary, medium, current_approval_state, current_publication_state, created_at, session_id, content_uri, preview_uri, content_text")
+      .select("artifact_id, title, summary, medium, artifact_role, current_approval_state, current_publication_state, created_at, session_id, content_uri, preview_uri, content_text")
       .order("created_at", { ascending: false });
 
     if (view === "approved") {
@@ -52,6 +61,10 @@ export default async function ArtifactReviewPage({
       query = query.eq("current_approval_state", "archived");
     } else {
       query = query.in("current_approval_state", ["pending_review", "needs_revision"]);
+    }
+
+    if (activeRole !== "all") {
+      query = query.eq("artifact_role", activeRole);
     }
 
     const { data } = await query;
@@ -73,6 +86,17 @@ export default async function ArtifactReviewPage({
             style={{ fontWeight: view === v.view ? 600 : 400 }}
           >
             {v.label}
+          </Link>
+        ))}
+      </nav>
+      <nav style={{ display: "flex", gap: "0.75rem", marginTop: "0.5rem", fontSize: "0.85rem" }}>
+        {ROLE_FILTERS.map((r) => (
+          <Link
+            key={r.role}
+            href={`/review/artifacts${view === "queue" ? "" : `?view=${view}`}${r.role === "all" ? "" : `${view === "queue" ? "?" : "&"}role=${r.role}`}`}
+            style={{ fontWeight: activeRole === r.role ? 600 : 400 }}
+          >
+            {r.label}
           </Link>
         ))}
       </nav>

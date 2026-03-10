@@ -54,6 +54,21 @@ export function ArtifactActions({
     }
   }
 
+  async function handleUnpublish() {
+    setLoading("unpublish");
+    try {
+      const res = await fetch(`/api/artifacts/${artifactId}/unpublish`, { method: "POST" });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        alert(j.error || res.statusText);
+        return;
+      }
+      router.refresh();
+    } finally {
+      setLoading(null);
+    }
+  }
+
   async function handleArchiveWithNote() {
     setLoading("archive-note");
     try {
@@ -100,6 +115,8 @@ export function ArtifactActions({
     currentState === "approved_for_publication" &&
     publicationState !== "published";
 
+  const canUnpublish = publicationState === "published";
+
   const canSetAvatar =
     medium === "image" &&
     (currentState === "approved" || currentState === "approved_for_publication");
@@ -119,6 +136,11 @@ export function ArtifactActions({
         {canPublish && (
           <button type="button" style={btn} disabled={loading !== null} onClick={handlePublish}>
             {loading === "publish" ? "…" : "Publish"}
+          </button>
+        )}
+        {canUnpublish && (
+          <button type="button" style={btn} disabled={loading !== null} onClick={handleUnpublish}>
+            {loading === "unpublish" ? "…" : "Unpublish"}
           </button>
         )}
         {canSetAvatar && (

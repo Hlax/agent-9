@@ -20,7 +20,12 @@ import {
   capSummaryTo200Words,
 } from "@/lib/habitat-payload";
 import { selectProjectAndThread } from "@/lib/project-thread-selection";
-import { getMaxArtifactsPerSession, isOverTokenLimit } from "@/lib/stop-limits";
+import {
+  getMaxArtifactsPerSession,
+  getMaxPendingAvatarProposals,
+  getMaxPendingHabitatLayoutProposals,
+  isOverTokenLimit,
+} from "@/lib/stop-limits";
 import { detectRepetition } from "@/lib/repetition-detection";
 import { addTokenUsage } from "@/lib/runtime-config";
 
@@ -53,6 +58,23 @@ export class SessionRunError extends Error {
     this.status = status;
     this.payload = payload;
   }
+}
+
+/**
+ * Lightweight classification for artifact role.
+ * This is intentionally narrow for now and can be evolved as metabolism improves.
+ */
+function inferArtifactRole(
+  medium: string | null | undefined,
+  isCron: boolean
+): string | null {
+  if (medium === "concept" && isCron) {
+    return "layout_concept";
+  }
+  if (medium === "image" && isCron) {
+    return "image_concept";
+  }
+  return null;
 }
 
 /**
@@ -222,6 +244,8 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       throw new SessionRunError(500, { error: `Session insert failed: ${sessionError.message}` });
     }
 
+    const artifactRole = inferArtifactRole(artifact.medium, options.isCron);
+
     const artifactRow = {
       artifact_id: artifact.artifact_id,
       project_id: selectedProjectId ?? artifact.project_id,
@@ -243,6 +267,7 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       fertility_score: artifact.fertility_score,
       pull_score: artifact.pull_score,
       recurrence_score: artifact.recurrence_score,
+      artifact_role: artifactRole,
       created_at: artifact.created_at,
       updated_at: artifact.updated_at,
     };
@@ -309,7 +334,8 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       throw new SessionRunError(500, { error: `Artifact update failed: ${artifactUpdateError.message}` });
     }
 
-    // Concept-to-proposal: if concept artifact is eligible, create a proposal (canon: concept_to_proposal_flow.md).
+    // Concept-to-proposal: if concept artifact is eligible, create or refresh a habitat layout proposal
+    // only when backlog is under cap (agent focuses on publishing or other lanes when backlog is full).
     if (artifact.medium === "concept") {
       const eligibility = isProposalEligible({
         medium: artifact.medium,
@@ -319,41 +345,83 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
         critique_outcome: critique.critique_outcome,
       });
       if (eligibility.eligible) {
-        const { data: existing } = await supabase
+        const cap = getMaxPendingHabitatLayoutProposals();
+        const { data: existingActive } = await supabase
           .from("proposal_record")
-          .select("proposal_record_id")
-          .eq("target_type", "concept")
-          .eq("target_id", artifact.artifact_id)
-          .in("proposal_state", ["rejected", "archived"])
-          .limit(1)
-          .maybeSingle();
-        if (!existing) {
+          .select("proposal_record_id, created_at")
+          .eq("lane_type", "surface")
+          .eq("proposal_role", "habitat_layout")
+          .eq("target_surface", "staging_habitat")
+          .in("proposal_state", ["pending_review", "approved_for_staging", "staged"]);
+
+        const count = Array.isArray(existingActive) ? existingActive.length : 0;
+        if (cap > 0 && count >= cap) {
+          console.log("[session] skipping habitat_layout proposal: backlog at cap", {
+            count,
+            cap,
+            role: "habitat_layout",
+          });
+        } else {
           const minimalPayload = buildMinimalHabitatPayloadFromConcept(artifact.title, artifact.summary);
           const validated = validateHabitatPayload(minimalPayload);
           const hasPayload = validated.success;
-          const proposalRow = {
-            lane_type: "surface",
-            target_type: "concept",
-            target_id: artifact.artifact_id,
-            artifact_id: artifact.artifact_id,
-            title: artifact.title,
-            summary: hasPayload ? summaryFromHabitatPayload(validated.data) : (artifact.summary?.slice(0, 2000) ?? null),
-            proposal_state: "pending_review",
-            target_surface: hasPayload ? "public_habitat" : "staging_habitat",
-            proposal_type: "layout",
-            habitat_payload_json: hasPayload ? (validated.data as object) : null,
-            preview_uri: null,
-            review_note: null,
-            created_by: createdBy,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          };
-          await supabase.from("proposal_record").insert(proposalRow);
+          const summary = hasPayload ? summaryFromHabitatPayload(validated.data) : (artifact.summary?.slice(0, 2000) ?? null);
+
+          if (Array.isArray(existingActive) && existingActive.length > 0) {
+            const sorted = [...existingActive].sort(
+              (a, b) => new Date(b.created_at as string).getTime() - new Date(a.created_at as string).getTime()
+            );
+            const newest = sorted[0];
+            const older = sorted.slice(1);
+
+            await supabase
+              .from("proposal_record")
+              .update({
+                title: artifact.title,
+                summary,
+                habitat_payload_json: hasPayload ? (validated.data as object) : null,
+                updated_at: new Date().toISOString(),
+              })
+              .eq("proposal_record_id", newest.proposal_record_id);
+
+            if (older.length > 0) {
+              await supabase
+                .from("proposal_record")
+                .update({
+                  proposal_state: "archived",
+                  updated_at: new Date().toISOString(),
+                })
+                .in(
+                  "proposal_record_id",
+                  older.map((o) => o.proposal_record_id)
+                );
+            }
+          } else {
+            const proposalRow = {
+              lane_type: "surface",
+              target_type: "concept",
+              target_id: artifact.artifact_id,
+              artifact_id: artifact.artifact_id,
+              title: artifact.title,
+              summary,
+              proposal_state: "pending_review",
+              target_surface: "staging_habitat",
+              proposal_type: "layout",
+              proposal_role: "habitat_layout",
+              habitat_payload_json: hasPayload ? (validated.data as object) : null,
+              preview_uri: null,
+              review_note: null,
+              created_by: createdBy,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            };
+            await supabase.from("proposal_record").insert(proposalRow);
+          }
         }
       }
     }
 
-    // Avatar proposal: when image artifact is produced, create an avatar_candidate proposal (Twin proposes this image as avatar).
+    // Avatar proposal: when image artifact is produced, create an avatar_candidate proposal only if under cap.
     if (artifact.medium === "image") {
       const { data: existingAvatar } = await supabase
         .from("proposal_record")
@@ -362,24 +430,41 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
         .eq("artifact_id", artifact.artifact_id)
         .limit(1)
         .maybeSingle();
-      if (!existingAvatar) {
-        const avatarSummary = capSummaryTo200Words(artifact.summary ?? artifact.title ?? "Proposed as public avatar.");
-        await supabase.from("proposal_record").insert({
-          lane_type: "surface",
-          target_type: "avatar_candidate",
-          target_id: artifact.artifact_id,
-          artifact_id: artifact.artifact_id,
-          title: artifact.title ?? "Avatar candidate",
-          summary: avatarSummary || null,
-          proposal_state: "pending_review",
-          target_surface: null,
-          proposal_type: "avatar",
-          preview_uri: artifact.preview_uri ?? null,
-          review_note: null,
-          created_by: createdBy,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        });
+      if (existingAvatar) {
+        // Already proposed this artifact.
+      } else {
+        const avatarCap = getMaxPendingAvatarProposals();
+        const { count: pendingAvatarCount } = await supabase
+          .from("proposal_record")
+          .select("proposal_record_id", { count: "exact", head: true })
+          .eq("target_type", "avatar_candidate")
+          .eq("proposal_state", "pending_review");
+        const pending = pendingAvatarCount ?? 0;
+        if (avatarCap > 0 && pending >= avatarCap) {
+          console.log("[session] skipping avatar_candidate proposal: backlog at cap", {
+            pending,
+            cap: avatarCap,
+            role: "avatar_candidate",
+          });
+        } else {
+          const avatarSummary = capSummaryTo200Words(artifact.summary ?? artifact.title ?? "Proposed as public avatar.");
+          await supabase.from("proposal_record").insert({
+            lane_type: "surface",
+            target_type: "avatar_candidate",
+            target_id: artifact.artifact_id,
+            artifact_id: artifact.artifact_id,
+            title: artifact.title ?? "Avatar candidate",
+            summary: avatarSummary || null,
+            proposal_state: "pending_review",
+            target_surface: null,
+            proposal_type: "avatar",
+            preview_uri: artifact.preview_uri ?? null,
+            review_note: null,
+            created_by: createdBy,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+        }
       }
     }
 

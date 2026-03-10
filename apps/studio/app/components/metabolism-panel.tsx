@@ -16,13 +16,24 @@ interface Snapshot {
   created_at: string;
 }
 
+interface BacklogState {
+  artifacts: Record<string, number>;
+  proposals: Record<string, number>;
+}
+
 function formatScore(v: number | null): string {
   if (v == null) return "—";
   return v.toFixed(2);
 }
 
+function sumValues(obj: Record<string, number>): number {
+  return Object.values(obj).reduce((a, b) => a + b, 0);
+}
+
 export function MetabolismPanel() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [backlog, setBacklog] = useState<BacklogState | null>(null);
+  const [runtime, setRuntime] = useState<{ mode?: string; tokens_used_today?: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -30,6 +41,8 @@ export function MetabolismPanel() {
       .then((r) => r.json())
       .then((body) => {
         setSnapshot(body.snapshot ?? null);
+        setBacklog(body.backlog ?? null);
+        setRuntime(body.runtime ?? null);
       })
       .catch(() => setError("Failed to load metabolism state"));
   }, []);
@@ -86,6 +99,24 @@ export function MetabolismPanel() {
         <dt>Public curation backlog</dt>
         <dd>{formatScore(snapshot.public_curation_backlog)}</dd>
       </dl>
+      {backlog && (
+        <>
+          <h3 style={{ fontSize: "0.9rem", margin: "0.75rem 0 0.35rem" }}>Backlog</h3>
+          <p style={{ margin: 0, fontSize: "0.75rem", color: "#555" }}>
+            Artifacts by state/role: {Object.keys(backlog.artifacts).length
+              ? Object.entries(backlog.artifacts)
+                  .map(([k, v]) => `${k.replace(/__/g, " ")}: ${v}`)
+                  .join(" · ")
+              : "0"}
+            . Proposals: {sumValues(backlog.proposals)} total (habitat_layout cap 2, avatar cap 3).
+          </p>
+        </>
+      )}
+      {runtime && (
+        <p style={{ margin: "0.35rem 0 0", fontSize: "0.75rem", color: "#666" }}>
+          Mode: {runtime.mode ?? "—"} · Tokens today: {runtime.tokens_used_today ?? 0}
+        </p>
+      )}
     </section>
   );
 }

@@ -43,3 +43,23 @@ export function getLowTokenThreshold(): number {
   const n = parseInt(v, 10);
   return Number.isFinite(n) && n >= 0 ? n : 0;
 }
+
+/** Max active (pending_review / approved_for_staging / staged) habitat_layout proposals. 0 = no cap. */
+export const DEFAULT_MAX_PENDING_HABITAT_LAYOUT = 2;
+
+export function getMaxPendingHabitatLayoutProposals(): number {
+  const v = process.env.MAX_PENDING_HABITAT_LAYOUT_PROPOSALS;
+  if (v == null || v === "") return DEFAULT_MAX_PENDING_HABITAT_LAYOUT;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MAX_PENDING_HABITAT_LAYOUT;
+}
+
+/** Max pending avatar_candidate proposals. 0 = no cap. */
+export const DEFAULT_MAX_PENDING_AVATAR = 3;
+
+export function getMaxPendingAvatarProposals(): number {
+  const v = process.env.MAX_PENDING_AVATAR_PROPOSALS;
+  if (v == null || v === "") return DEFAULT_MAX_PENDING_AVATAR;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MAX_PENDING_AVATAR;
+}

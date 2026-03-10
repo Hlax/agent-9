@@ -8,6 +8,7 @@ interface Proposal {
   lane_type: string;
   target_type: string;
   target_surface?: string | null;
+  proposal_role?: string | null;
   title: string;
   summary: string | null;
   proposal_state: string;
@@ -31,7 +32,9 @@ export function HabitatProposalList({ view }: { view: "pending_review" | "approv
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/proposals?lane_type=surface&target_type=public_habitat_proposal,concept&proposal_state=${view}`)
+    fetch(
+      `/api/proposals?lane_type=surface&target_type=public_habitat_proposal,concept&proposal_role=habitat_layout&proposal_state=${view}`
+    )
       .then((r) => r.json())
       .then((d) => setProposals(d.proposals ?? []))
       .finally(() => setLoading(false));
@@ -40,17 +43,34 @@ export function HabitatProposalList({ view }: { view: "pending_review" | "approv
   const handleApprove = async (id: string, p: Proposal) => {
     setApproving(id);
     try {
+      const isConcept = p.target_type === "concept";
       const canPublishToPublic =
         p.target_surface === "public_habitat" || (p.habitat_payload_json != null && typeof p.habitat_payload_json === "object");
-      const action =
-        p.target_type === "concept" && !canPublishToPublic
-          ? "approve_for_staging"
-          : "approve_for_publication";
+      const action = isConcept
+        ? "approve_for_staging"
+        : canPublishToPublic
+          ? "approve_for_publication"
+          : "approve";
       const res = await fetch(`/api/proposals/${id}/approve`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
       if (res.ok) setProposals((prev) => prev.filter((x) => x.proposal_record_id !== id));
       router.refresh();
     } finally {
       setApproving(null);
+    }
+  };
+
+  const handleUnpublish = async (id: string, archive: boolean) => {
+    setArchiving(id);
+    try {
+      const res = await fetch(`/api/proposals/${id}/unpublish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archive }),
+      });
+      if (res.ok) setProposals((p) => p.filter((x) => x.proposal_record_id !== id));
+      router.refresh();
+    } finally {
+      setArchiving(null);
     }
   };
 
@@ -108,7 +128,13 @@ export function HabitatProposalList({ view }: { view: "pending_review" | "approv
           {p.proposal_state === "pending_review" && (
             <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
               <button type="button" style={btn} onClick={() => handleApprove(p.proposal_record_id, p)} disabled={approving === p.proposal_record_id}>
-                {approving === p.proposal_record_id ? "…" : (p.target_surface === "public_habitat" || p.habitat_payload_json) ? "Approve for publication" : p.target_type === "concept" ? "Approve for staging" : "Approve"}
+                {approving === p.proposal_record_id
+                  ? "…"
+                  : p.target_type === "concept"
+                    ? "Approve for staging"
+                    : (p.target_surface === "public_habitat" || p.habitat_payload_json)
+                      ? "Approve for publication"
+                      : "Approve"}
               </button>
               <button type="button" style={btn} onClick={() => handleReject(p.proposal_record_id)} disabled={archiving === p.proposal_record_id}>Reject</button>
               <button type="button" style={btn} onClick={() => handleIgnore(p.proposal_record_id)} disabled={archiving === p.proposal_record_id}>Ignore</button>
@@ -117,10 +143,25 @@ export function HabitatProposalList({ view }: { view: "pending_review" | "approv
               )}
             </div>
           )}
-          {p.proposal_state === "approved" && (
-            <button type="button" style={{ ...btn, marginTop: "0.5rem" }} onClick={() => handleArchive(p.proposal_record_id)} disabled={archiving === p.proposal_record_id}>
-              {archiving === p.proposal_record_id ? "…" : "Archive"}
-            </button>
+          {p.proposal_state === "approved_for_publication" && (
+            <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+              <button
+                type="button"
+                style={btn}
+                onClick={() => handleUnpublish(p.proposal_record_id, false)}
+                disabled={archiving === p.proposal_record_id}
+              >
+                {archiving === p.proposal_record_id ? "…" : "Unpublish to staging"}
+              </button>
+              <button
+                type="button"
+                style={btn}
+                onClick={() => handleUnpublish(p.proposal_record_id, true)}
+                disabled={archiving === p.proposal_record_id}
+              >
+                {archiving === p.proposal_record_id ? "…" : "Unpublish + archive"}
+              </button>
+            </div>
           )}
         </li>
       ))}
