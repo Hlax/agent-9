@@ -7,29 +7,34 @@ import { getSupabaseServer } from "@/lib/supabase-server";
 export async function GET() {
   const supabase = getSupabaseServer();
   if (!supabase) {
-    return NextResponse.json({ snapshot: null, backlog: null });
+    return NextResponse.json({ snapshot: null, backlog: null, return_candidates: 0 });
   }
 
-  const [stateRes, artifactBacklogRes, proposalBacklogRes, runtimeConfigRes] = await Promise.all([
-    supabase
-      .from("creative_state_snapshot")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-    supabase
-      .from("artifact")
-      .select("medium, artifact_role, current_approval_state", { count: "exact", head: false }),
-    supabase
-      .from("proposal_record")
-      .select("proposal_role, proposal_state, lane_type, target_surface", { count: "exact", head: false }),
-    supabase
-      .from("runtime_config")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-  ]);
+  const [stateRes, artifactBacklogRes, proposalBacklogRes, runtimeConfigRes, archiveCountRes] =
+    await Promise.all([
+      supabase
+        .from("creative_state_snapshot")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from("artifact")
+        .select("medium, artifact_role, current_approval_state", { count: "exact", head: false }),
+      supabase
+        .from("proposal_record")
+        .select("proposal_role, proposal_state, lane_type, target_surface", {
+          count: "exact",
+          head: false,
+        }),
+      supabase
+        .from("runtime_config")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase.from("archive_entry").select("archive_entry_id", { count: "exact", head: true }),
+    ]);
 
   const { data: snapshot, error: stateError } = stateRes;
 
@@ -56,12 +61,14 @@ export async function GET() {
     ) ?? {};
 
   const { data: runtimeConfig } = runtimeConfigRes;
+  const returnCandidatesCount = archiveCountRes.count ?? 0;
 
   if (stateError || !snapshot) {
     return NextResponse.json({
       snapshot: null,
       backlog: { artifacts: artifactBacklog, proposals: proposalBacklog },
       runtime: runtimeConfig ?? null,
+      return_candidates: returnCandidatesCount,
     });
   }
 
@@ -72,6 +79,7 @@ export async function GET() {
       proposals: proposalBacklog,
     },
     runtime: runtimeConfig ?? null,
+    return_candidates: returnCandidatesCount,
   });
 }
 

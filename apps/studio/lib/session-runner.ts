@@ -19,7 +19,10 @@ import {
   validateHabitatPayload,
   capSummaryTo200Words,
 } from "@/lib/habitat-payload";
-import { selectProjectAndThread } from "@/lib/project-thread-selection";
+import {
+  selectProjectAndThread,
+  getProjectThreadIdeaContext,
+} from "@/lib/project-thread-selection";
 import {
   getMaxArtifactsPerSession,
   getMaxPendingAvatarProposals,
@@ -155,11 +158,87 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
   const mode = computeSessionMode(previousState);
   const driveWeights = computeDriveWeights(previousState);
   const selectedDrive = selectDrive(driveWeights);
-  const { projectId: selectedProjectId, ideaThreadId: selectedThreadId } = supabase
-    ? await selectProjectAndThread(supabase)
-    : { projectId: null, ideaThreadId: null };
-  const brainContext = await getBrainContext(supabase);
-  const workingContextString = buildWorkingContextString(brainContext);
+  let selectedProjectId: string | null = null;
+  let selectedThreadId: string | null = null;
+  let selectedIdeaId: string | null = null;
+
+  if (supabase) {
+    // For return sessions, prefer resurfacing from archive entries when available.
+    if (mode === "return") {
+      const { data: archives } = await supabase
+        .from("archive_entry")
+        .select("project_id, idea_thread_id, idea_id, recurrence_score, creative_pull, created_at")
+        .order("created_at", { ascending: false })
+        .limit(50);
+
+      if (archives && archives.length > 0) {
+        const nowMs = Date.now();
+        const decayHalfLifeDays = 60; // older entries get lower weight
+        const weights = archives.map((row) => {
+          const r = (row.recurrence_score as number | null) ?? 0.5;
+          const p = (row.creative_pull as number | null) ?? 0.5;
+          const base = r * 0.6 + p * 0.4;
+          const created = row.created_at ? new Date(row.created_at as string).getTime() : nowMs;
+          const daysSince = (nowMs - created) / (24 * 60 * 60 * 1000);
+          const recency = 1 / (1 + daysSince / decayHalfLifeDays);
+          return base * recency;
+        });
+        const total = weights.reduce((a, b) => a + b, 0) || 1;
+        let acc = 0;
+        const r = Math.random();
+        let chosenIndex = 0;
+        for (let i = 0; i < archives.length; i++) {
+          acc += weights[i]! / total;
+          if (r <= acc) {
+            chosenIndex = i;
+            break;
+          }
+          chosenIndex = i;
+        }
+        const chosen = archives[chosenIndex];
+        if (chosen) {
+          selectedProjectId = (chosen.project_id as string | null) ?? null;
+          selectedThreadId = (chosen.idea_thread_id as string | null) ?? null;
+          selectedIdeaId = (chosen.idea_id as string | null) ?? null;
+          console.log("[session] selection: return_from_archive", {
+            archive_project: selectedProjectId,
+            archive_thread: selectedThreadId,
+            archive_idea: selectedIdeaId,
+          });
+        }
+      }
+    }
+
+    // Fallback (or non-return modes): regular project/thread/idea selection.
+    if (!selectedProjectId && !selectedThreadId && !selectedIdeaId) {
+      const selection = await selectProjectAndThread(supabase);
+      selectedProjectId = selection.projectId;
+      selectedThreadId = selection.ideaThreadId;
+      selectedIdeaId = selection.ideaId;
+      if (selectedProjectId || selectedThreadId || selectedIdeaId) {
+        console.log("[session] selection: project_thread_idea", {
+          project: selectedProjectId,
+          thread: selectedThreadId,
+          idea: selectedIdeaId,
+        });
+      }
+    }
+  }
+  const brainContext = await getBrainContext(supabase, {
+    project_id: selectedProjectId ?? null,
+  });
+  let workingContextString = buildWorkingContextString(brainContext);
+  if (supabase && (selectedProjectId || selectedThreadId || selectedIdeaId)) {
+    const focusContext = await getProjectThreadIdeaContext(
+      supabase,
+      selectedProjectId,
+      selectedThreadId,
+      selectedIdeaId
+    );
+    if (focusContext) {
+      workingContextString = [workingContextString, focusContext].filter(Boolean).join("\n\n");
+    }
+  }
   const derivedPreferMedium = derivePreferredMedium(previousState, preferMedium, isCron);
   const effectiveMode = derivedPreferMedium === "concept" ? "reflect" : mode;
 
@@ -168,6 +247,8 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       mode: effectiveMode,
       selectedDrive,
       projectId: selectedProjectId ?? undefined,
+      ideaThreadId: selectedThreadId ?? undefined,
+      ideaId: selectedIdeaId ?? undefined,
       promptContext: promptContext ?? undefined,
       sourceContext: workingContextString || undefined,
       preferMedium: derivedPreferMedium ?? undefined,
@@ -250,7 +331,7 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       artifact_id: artifact.artifact_id,
       project_id: selectedProjectId ?? artifact.project_id,
       session_id: artifact.session_id,
-      primary_idea_id: artifact.primary_idea_id,
+      primary_idea_id: selectedIdeaId ?? artifact.primary_idea_id,
       primary_thread_id: selectedThreadId ?? artifact.primary_thread_id,
       title: artifact.title,
       summary: artifact.summary,

@@ -34,6 +34,7 @@ export function MetabolismPanel() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [backlog, setBacklog] = useState<BacklogState | null>(null);
   const [runtime, setRuntime] = useState<{ mode?: string; tokens_used_today?: number } | null>(null);
+  const [returnCandidates, setReturnCandidates] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -43,6 +44,9 @@ export function MetabolismPanel() {
         setSnapshot(body.snapshot ?? null);
         setBacklog(body.backlog ?? null);
         setRuntime(body.runtime ?? null);
+        setReturnCandidates(
+          typeof body.return_candidates === "number" ? body.return_candidates : null
+        );
       })
       .catch(() => setError("Failed to load metabolism state"));
   }, []);
@@ -115,6 +119,7 @@ export function MetabolismPanel() {
       {runtime && (
         <p style={{ margin: "0.35rem 0 0", fontSize: "0.75rem", color: "#666" }}>
           Mode: {runtime.mode ?? "—"} · Tokens today: {runtime.tokens_used_today ?? 0}
+          {returnCandidates !== null && ` · Return candidates: ${returnCandidates}`}
         </p>
       )}
     </section>

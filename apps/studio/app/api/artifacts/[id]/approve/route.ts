@@ -79,6 +79,39 @@ export async function POST(
       );
     }
 
+    // When archiving, create an archive_entry so return sessions can resurface this artifact's lineage.
+    if (approval_state === "archived") {
+      const { data: artifact } = await supabase
+        .from("artifact")
+        .select("project_id, primary_idea_id, primary_thread_id, recurrence_score, pull_score")
+        .eq("artifact_id", artifactId)
+        .single();
+      const { data: existing } = await supabase
+        .from("archive_entry")
+        .select("archive_entry_id")
+        .eq("artifact_id", artifactId)
+        .limit(1)
+        .maybeSingle();
+      if (artifact && !existing) {
+        const { data: lastSession } = await supabase
+          .from("creative_session")
+          .select("session_id")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        await supabase.from("archive_entry").insert({
+          project_id: artifact.project_id,
+          artifact_id: artifactId,
+          idea_id: artifact.primary_idea_id,
+          idea_thread_id: artifact.primary_thread_id,
+          reason_paused: "archived_artifact",
+          creative_pull: artifact.pull_score,
+          recurrence_score: artifact.recurrence_score,
+          last_session_id: lastSession?.session_id ?? null,
+        });
+      }
+    }
+
     const reviewer =
       (authClient && (await authClient.auth.getUser()).data.user?.email) ?? null;
 

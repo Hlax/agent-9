@@ -18,6 +18,10 @@ export interface SessionContext {
   /** Loaded for session start; identity, recent sessions, threads, etc. */
   identityId?: string;
   projectId?: string;
+  /** Selected idea thread for lineage and context. */
+  ideaThreadId?: string | null;
+  /** Selected idea for lineage and context. */
+  ideaId?: string | null;
   mode: SessionMode;
   /** Selected drive for this session (from drive weights). */
   selectedDrive?: CreativeDrive | null;
@@ -97,8 +101,8 @@ export async function runSessionPipeline(
     artifact_id: crypto.randomUUID(),
     project_id: context.projectId ?? null,
     session_id: session.session_id,
-    primary_idea_id: null,
-    primary_thread_id: null,
+    primary_idea_id: context.ideaId ?? null,
+    primary_thread_id: context.ideaThreadId ?? null,
     title: generated.title,
     summary: generated.summary || null,
     medium,

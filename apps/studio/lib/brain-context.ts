@@ -36,10 +36,11 @@ export interface BrainContextResult {
 /**
  * Load full brain context: identity, latest creative state, recent memory records, source summary.
  * Caller uses this to build the Working Context (Layer A) string for the LLM.
+ * When project_id is provided, memory is filtered to that project (and null project) for continuity.
  */
 export async function getBrainContext(
   supabase: SupabaseClient | null,
-  _options?: { identityId?: string | null }
+  options?: { identityId?: string | null; project_id?: string | null }
 ): Promise<BrainContextResult> {
   if (!supabase) {
     const { defaultCreativeState } = await import("@twin/evaluation");
@@ -55,7 +56,7 @@ export async function getBrainContext(
   const [identityRow, { state: creativeState }, retrievedMemories, sourceSummary] = await Promise.all([
     loadActiveIdentity(supabase),
     getLatestCreativeState(supabase),
-    retrieveMemory(fetcher, { limit: 10 }),
+    retrieveMemory(fetcher, { limit: 10, project_id: options?.project_id ?? null }),
     getSourceContextForSession(supabase),
   ]);
 
