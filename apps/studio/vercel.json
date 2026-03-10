@@ -1,6 +1,9 @@
 {
   "installCommand": "cd ../.. && pnpm install",
   "buildCommand": "cd ../.. && pnpm --filter studio... build",
+  "env": {
+    "NODE_OPTIONS": "--disable-warning=DEP0169"
+  },
   "crons": [
     {
       "path": "/api/cron/session",
