@@ -16,6 +16,7 @@
     "db:reset": "pnpm exec supabase db reset",
     "db:wipe": "pnpm run db:reset",
     "db:wipe:linked": "pnpm exec supabase db reset --linked",
+    "db:wipe:remote": "node scripts/db-wipe-remote.js",
     "db:verify": "pnpm exec supabase db reset"
   },
   "packageManager": "pnpm@9.14.2",
