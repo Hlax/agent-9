@@ -189,8 +189,7 @@ function BuildStatePanel({ state }: { state: BuildState }) {
         <dd style={{ margin: 0 }}>{new Date(state.last_deploy_time).toLocaleString()}</dd>
         <dt style={{ fontWeight: 600 }}>App / product</dt>
         <dd style={{ margin: 0 }}>
-          {state.app_version ?? "n/a"}
-          {state.product_version ? ` - ${state.product_version}` : ""}
+          {(state.app_version ?? "n/a") + (state.product_version ? " - " + state.product_version : "")}
         </dd>
         <dt style={{ fontWeight: 600 }}>Staging vs main</dt>
         <dd style={{ margin: 0 }}>
