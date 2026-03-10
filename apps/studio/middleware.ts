@@ -10,6 +10,7 @@ export const config = {
     // - static assets
     // - favicon
     // - public APIs used by habitat / cron
-    "/((?!_next/static|_next/image|favicon.ico|api/public/|api/cron/session).*)",
+    // - cron and session runner endpoints (accept x-cron-secret instead of cookie auth)
+    "/((?!_next/static|_next/image|favicon.ico|api/public/|api/cron/session|api/session/run).*)",
   ],
 };

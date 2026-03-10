@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { getRuntimeConfig, setLastRunAt, setRuntimeConfig, getIntervalMs } from "@/lib/runtime-config";
 import { getLowTokenThreshold } from "@/lib/stop-limits";
+import { runSessionInternal, SessionRunError } from "@/lib/session-runner";
 
 const CRON_SECRET_HEADER = "x-cron-secret";
 
@@ -21,6 +22,12 @@ export async function GET(request: Request) {
   // manual calls work reliably in production. Safety is enforced by
   // always_on flag, mode, and token/interval guards. Manual callers
   // can still pass x-cron-secret; it is forwarded to /api/session/run.
+
+  const cronSecret = request.headers.get(CRON_SECRET_HEADER);
+  if (process.env.CRON_SECRET && cronSecret !== process.env.CRON_SECRET) {
+    console.log("[cron/session] unauthorized: missing or invalid cron secret");
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   const supabase = getSupabaseServer();
   let config = await getRuntimeConfig(supabase);
@@ -109,49 +116,68 @@ export async function GET(request: Request) {
     });
   }
 
-  const base = process.env.APP_URL ?? process.env.VERCEL_URL ?? "http://localhost:3000";
-  const url = base.startsWith("http") ? base : `https://${base}`;
-  const runUrl = `${url.replace(/\/$/, "")}/api/session/run`;
+  console.log("[cron/session] session run started");
 
-  console.log("[cron/session] about to call session runner", { runUrl });
+  try {
+    const payload = await runSessionInternal({
+      createdBy: "harvey",
+      isCron: true,
+      promptContext: null,
+      preferMedium: null,
+    });
 
-  // Empty body = no preferMedium; session/run will use derivePreferredMedium (creative state).
-  // CRON_SECRET must be set in Vercel env so session/run accepts this server-to-server call.
-  const res = await fetch(runUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      [CRON_SECRET_HEADER]: process.env.CRON_SECRET ?? "",
-    },
-    body: JSON.stringify({}),
-  });
+    if (supabase) {
+      console.log("[cron/session] updating last_run_at");
+      await setLastRunAt(supabase, new Date().toISOString());
+    }
 
-  console.log("[cron/session] session runner response", {
-    ok: res.ok,
-    status: res.status,
-  });
+    console.log("[cron/session] session run succeeded", {
+      session_id: payload.session_id,
+      artifact_count: payload.artifact_count,
+    });
 
-  if (supabase && (res.ok || res.status < 500)) {
-    console.log("[cron/session] updating last_run_at");
-    await setLastRunAt(supabase, new Date().toISOString());
-  }
+    return NextResponse.json({
+      triggered: true,
+      mode: config.mode,
+      session: {
+        session_id: payload.session_id,
+        artifact_count: payload.artifact_count,
+        artifact_medium: payload.artifact_medium,
+      },
+    });
+  } catch (e) {
+    if (supabase) {
+      // Do NOT advance last_run_at on failure; cron should retry next interval.
+      console.error("[cron/session] session run failed (no last_run_at update)", {
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    console.error("[cron/session] session runner failed", {
-      status: res.status,
-      error: text.slice(0, 200),
+    if (e instanceof SessionRunError) {
+      console.error("[cron/session] session runner failed", {
+        status: e.status,
+        error: e.payload,
+      });
+      return NextResponse.json(
+        {
+          triggered: true,
+          run_status: e.status,
+          run_error: e.payload,
+        },
+        { status: 200 }
+      );
+    }
+
+    console.error("[cron/session] session runner failed with unexpected error", {
+      error: e instanceof Error ? e.message : String(e),
     });
     return NextResponse.json(
       {
         triggered: true,
-        run_status: res.status,
-        run_error: text.slice(0, 200),
+        run_status: 500,
+        run_error: { error: "Session run failed" },
       },
       { status: 200 }
     );
   }
-
-  console.log("[cron/session] completed successfully", { mode: config.mode });
-  return NextResponse.json({ triggered: true, mode: config.mode });
 }
