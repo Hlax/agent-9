@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getSupabaseServer } from "@/lib/supabase-server";
+import { setLastRunAt } from "@/lib/runtime-config";
 import { runSessionInternal, SessionRunError, type PreferredMedium } from "@/lib/session-runner";
 
 /**
@@ -57,6 +59,12 @@ export async function POST(request: Request) {
       promptContext,
       preferMedium,
     });
+
+    // Update last_run_at so the cron interval guard accounts for manual session runs.
+    const serviceSupabase = getSupabaseServer();
+    if (serviceSupabase) {
+      await setLastRunAt(serviceSupabase, new Date().toISOString());
+    }
 
     return NextResponse.json(payload);
   } catch (e) {

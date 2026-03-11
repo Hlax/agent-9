@@ -84,6 +84,7 @@ export async function GET() {
     mode: runtimeConfig.mode,
     always_on: runtimeConfig.always_on,
     tokens_used_today: runtimeConfig.tokens_used_today,
+    last_run_at: runtimeConfig.last_run_at,
   };
 
   if (stateError || !snapshot) {

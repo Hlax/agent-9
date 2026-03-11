@@ -55,6 +55,16 @@ export interface SessionRunSuccessPayload {
   persisted: boolean;
   requested_medium?: PreferredMedium;
   artifact_medium: PreferredMedium | "other" | null;
+  /** True when archive_entry row was successfully inserted (only set when critique_outcome=archive_candidate). */
+  archive_entry_created?: boolean;
+  /** True when idea and/or idea_thread recurrence_score was written back. */
+  recurrence_updated?: boolean;
+  /** True when a proposal_record was created or refreshed for this session's artifact. */
+  proposal_created?: boolean;
+  /** True when memory_record was successfully inserted. */
+  memory_record_created?: boolean;
+  /** Non-empty when any soft (non-fatal) operation failed during the session. */
+  warnings: string[];
 }
 
 export class SessionRunError extends Error {
@@ -290,6 +300,7 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       persisted: Boolean(supabase),
       requested_medium: derivedPreferMedium ?? undefined,
       artifact_medium: null,
+      warnings: [],
     };
   }
 
@@ -322,6 +333,14 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
   });
 
   if (supabase) {
+    const sessionWarnings: string[] = [];
+    let archiveEntryCreated = false;
+    /** true only when every attempted recurrence writeback (idea and/or thread) succeeded. */
+    let recurrenceUpdated = false;
+    let recurrenceAttempted = false;
+    let recurrenceAllSucceeded = true;
+    let proposalCreated = false;
+    let memoryRecordCreated = false;
     let traceProposalId: string | null = null;
     let traceProposalType: string | null = null;
     const decisionSummary: {
@@ -474,10 +493,11 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       });
       const { error: archiveError } = await supabase.from("archive_entry").insert(archiveEntry);
       if (archiveError) {
-        console.warn("[session] archive_entry insert failed", {
-          artifact_id: artifact.artifact_id,
-          error: archiveError.message,
-        });
+        const msg = `archive_entry insert failed: ${archiveError.message}`;
+        console.warn("[session]", msg, { artifact_id: artifact.artifact_id });
+        sessionWarnings.push(msg);
+      } else {
+        archiveEntryCreated = true;
       }
     }
 
@@ -527,7 +547,7 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
             if (newest) {
               traceProposalId = newest.proposal_record_id as string;
               traceProposalType = "surface";
-              await supabase
+              const { error: updateProposalError } = await supabase
                 .from("proposal_record")
                 .update({
                   title: artifact.title,
@@ -536,9 +556,16 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
                   updated_at: new Date().toISOString(),
                 })
                 .eq("proposal_record_id", newest.proposal_record_id);
+              if (updateProposalError) {
+                const msg = `habitat_layout proposal update failed: ${updateProposalError.message}`;
+                console.warn("[session]", msg, { proposal_record_id: newest.proposal_record_id });
+                sessionWarnings.push(msg);
+              } else {
+                proposalCreated = true;
+              }
 
               if (older.length > 0) {
-                await supabase
+                const { error: archiveOlderError } = await supabase
                   .from("proposal_record")
                   .update({
                     proposal_state: "archived",
@@ -548,6 +575,12 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
                     "proposal_record_id",
                     older.map((o) => o.proposal_record_id)
                   );
+                if (archiveOlderError) {
+                  console.warn("[session] archiving older habitat_layout proposals failed", {
+                    error: archiveOlderError.message,
+                    count: older.length,
+                  });
+                }
               }
             }
           } else {
@@ -569,14 +602,19 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
             };
-            const { data: insertedHabitat } = await supabase
+            const { data: insertedHabitat, error: insertHabitatError } = await supabase
               .from("proposal_record")
               .insert(proposalRow)
               .select("proposal_record_id")
               .single();
-            if (insertedHabitat?.proposal_record_id) {
+            if (insertHabitatError) {
+              const msg = `habitat_layout proposal insert failed: ${insertHabitatError.message}`;
+              console.warn("[session]", msg, { artifact_id: artifact.artifact_id });
+              sessionWarnings.push(msg);
+            } else if (insertedHabitat?.proposal_record_id) {
               traceProposalId = insertedHabitat.proposal_record_id as string;
               traceProposalType = "surface";
+              proposalCreated = true;
               decisionSummary.next_action =
                 decisionSummary.next_action ??
                 "Create or refine a habitat layout proposal for the staging habitat from this concept.";
@@ -613,7 +651,7 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
           });
         } else {
           const avatarSummary = capSummaryTo200Words(artifact.summary ?? artifact.title ?? "Proposed as public avatar.");
-          const { data: insertedAvatar } = await supabase
+          const { data: insertedAvatar, error: insertAvatarError } = await supabase
             .from("proposal_record")
             .insert({
               lane_type: "surface",
@@ -633,9 +671,14 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
             })
             .select("proposal_record_id")
             .single();
-          if (insertedAvatar?.proposal_record_id) {
+          if (insertAvatarError) {
+            const msg = `avatar_candidate proposal insert failed: ${insertAvatarError.message}`;
+            console.warn("[session]", msg, { artifact_id: artifact.artifact_id });
+            sessionWarnings.push(msg);
+          } else if (insertedAvatar?.proposal_record_id) {
             traceProposalId = insertedAvatar.proposal_record_id as string;
             traceProposalType = "avatar";
+            proposalCreated = true;
             decisionSummary.next_action =
               decisionSummary.next_action ?? "Propose a new avatar candidate for review based on this image.";
           }
@@ -727,6 +770,7 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
     if (memError) {
       throw new SessionRunError(500, { error: `Memory record insert failed: ${memError.message}` });
     }
+    memoryRecordCreated = true;
 
     // A-2: Recurrence writeback — propagate evaluation.recurrence_score to the selected idea and thread.
     // Only writes when recurrence_score is non-null to avoid clearing an existing score from a prior session.
@@ -736,11 +780,12 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
         .from("idea")
         .update({ recurrence_score: evaluation.recurrence_score, updated_at: new Date().toISOString() })
         .eq("idea_id", selectedIdeaId);
+      recurrenceAttempted = true;
       if (ideaRecurrenceError) {
-        console.warn("[session] recurrence writeback failed for idea", {
-          idea_id: selectedIdeaId,
-          error: ideaRecurrenceError.message,
-        });
+        const msg = `recurrence writeback failed for idea ${selectedIdeaId}: ${ideaRecurrenceError.message}`;
+        console.warn("[session]", msg);
+        sessionWarnings.push(msg);
+        recurrenceAllSucceeded = false;
       }
     }
     if (selectedThreadId && evaluation.recurrence_score !== null) {
@@ -748,13 +793,15 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
         .from("idea_thread")
         .update({ recurrence_score: evaluation.recurrence_score, updated_at: new Date().toISOString() })
         .eq("idea_thread_id", selectedThreadId);
+      recurrenceAttempted = true;
       if (threadRecurrenceError) {
-        console.warn("[session] recurrence writeback failed for idea_thread", {
-          idea_thread_id: selectedThreadId,
-          error: threadRecurrenceError.message,
-        });
+        const msg = `recurrence writeback failed for idea_thread ${selectedThreadId}: ${threadRecurrenceError.message}`;
+        console.warn("[session]", msg);
+        sessionWarnings.push(msg);
+        recurrenceAllSucceeded = false;
       }
     }
+    recurrenceUpdated = recurrenceAttempted && recurrenceAllSucceeded;
 
     const tokensUsedForRecord = "tokensUsed" in result && typeof result.tokensUsed === "number" ? result.tokensUsed : 0;
     if (tokensUsedForRecord > 0) await addTokenUsage(supabase, tokensUsedForRecord);
@@ -800,10 +847,35 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       start_time: result.session.started_at,
       end_time: result.session.ended_at ?? new Date().toISOString(),
     };
-    await supabase
+    const { error: traceUpdateError } = await supabase
       .from("creative_session")
       .update({ trace, decision_summary: decisionSummary, updated_at: new Date().toISOString() })
       .eq("session_id", result.session.session_id);
+    if (traceUpdateError) {
+      const msg = `session trace update failed: ${traceUpdateError.message}`;
+      console.warn("[session]", msg, { session_id: result.session.session_id });
+      sessionWarnings.push(msg);
+    }
+
+    const artifactMedium: PreferredMedium | "other" | null =
+      artifact.medium === "image" || artifact.medium === "writing" || artifact.medium === "concept"
+        ? artifact.medium
+        : artifact.medium
+          ? "other"
+          : null;
+
+    return {
+      session_id: result.session.session_id,
+      artifact_count: (result.artifacts ?? []).length,
+      persisted: true,
+      requested_medium: derivedPreferMedium ?? undefined,
+      artifact_medium: artifactMedium,
+      archive_entry_created: archiveEntryCreated,
+      recurrence_updated: recurrenceUpdated,
+      proposal_created: proposalCreated,
+      memory_record_created: memoryRecordCreated,
+      warnings: sessionWarnings,
+    };
   }
 
   const artifactMedium: PreferredMedium | "other" | null =
@@ -819,6 +891,7 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
     persisted: Boolean(supabase),
     requested_medium: derivedPreferMedium ?? undefined,
     artifact_medium: artifactMedium,
+    warnings: [],
   };
 }
 
