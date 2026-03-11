@@ -103,7 +103,7 @@ export function ContinuityHistory({ sessions, summary }: ContinuityHistoryProps)
               <div style={{ marginTop: "0.25rem", color: "#444" }}>
                 <strong>Proposals</strong>:{" "}
                 {s.proposal_created
-                  ? `${s.proposal_type ?? "proposal"} ${s.proposal_role ? `(${s.proposal_role})` : ""}`
+                  ? `${s.proposal_role ?? s.proposal_type ?? "proposal"}${s.proposal_role && s.proposal_type ? ` (${s.proposal_type})` : ""}`
                   : "none"}
               </div>
               <div style={{ marginTop: "0.25rem", color: "#444" }}>

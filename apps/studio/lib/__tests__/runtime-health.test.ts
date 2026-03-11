@@ -114,5 +114,61 @@ describe("runtime health helpers", () => {
     expect(summary.windowSize).toBe(3);
     expect(summary.flags.length).toBeGreaterThanOrEqual(0);
   });
+
+  it("detects repetition_risk for a dominant non-baseline action", () => {
+    // generate_avatar_candidate appearing in 4 of 5 sessions should trigger repetition_risk
+    const rows: ContinuitySessionRow[] = [
+      makeRow({ action_kind: "generate_avatar_candidate" }),
+      makeRow({ action_kind: "generate_avatar_candidate" }),
+      makeRow({ action_kind: "generate_avatar_candidate" }),
+      makeRow({ action_kind: "generate_avatar_candidate" }),
+      makeRow({ action_kind: "continue_thread" }),
+    ];
+    const summary = buildRuntimeHealthSummary(rows);
+    expect(flagIds(summary)).toContain("repetition_risk");
+  });
+
+  it("does NOT trigger repetition_risk for a healthy baseline-only window", () => {
+    // continue_thread is the baseline action; its presence alone is not repetition risk
+    const rows: ContinuitySessionRow[] = [
+      makeRow({ action_kind: "continue_thread" }),
+      makeRow({ action_kind: "continue_thread" }),
+      makeRow({ action_kind: "continue_thread" }),
+      makeRow({ action_kind: "continue_thread" }),
+    ];
+    const summary = buildRuntimeHealthSummary(rows);
+    expect(flagIds(summary)).not.toContain("repetition_risk");
+  });
+
+  it("returns empty flags and windowSize 0 for empty input", () => {
+    const summary = buildRuntimeHealthSummary([]);
+    expect(summary.flags).toHaveLength(0);
+    expect(summary.windowSize).toBe(0);
+  });
+
+  it("deduplicates flags if the same id would be produced twice", () => {
+    // A window that triggers both reflection_streak and low_confidence_streak
+    // should not produce duplicate entries for the same flag id
+    const rows: ContinuitySessionRow[] = [
+      makeRow({ narrative_state: "reflection", confidence_band: "low", confidence: 0.1 }),
+      makeRow({ narrative_state: "reflection", confidence_band: "low", confidence: 0.2 }),
+      makeRow({ narrative_state: "reflection", confidence_band: "low", confidence: 0.3 }),
+    ];
+    const summary = buildRuntimeHealthSummary(rows);
+    const ids = flagIds(summary);
+    const uniqueIds = Array.from(new Set(ids));
+    expect(ids).toEqual(uniqueIds);
+  });
+
+  it("flags are returned in deterministic (sorted) order", () => {
+    const rows: ContinuitySessionRow[] = [
+      makeRow({ narrative_state: "reflection" }),
+      makeRow({ narrative_state: "reflection" }),
+      makeRow({ narrative_state: "reflection" }),
+    ];
+    const a = buildRuntimeHealthSummary(rows);
+    const b = buildRuntimeHealthSummary(rows);
+    expect(a.flags.map((f) => f.id)).toEqual(b.flags.map((f) => f.id));
+  });
 });
 

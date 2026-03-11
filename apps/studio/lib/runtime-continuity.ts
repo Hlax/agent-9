@@ -1,3 +1,5 @@
+import { classifyConfidenceBand } from "./ontology-helpers";
+
 export interface ContinuitySessionRow {
   session_id: string;
   created_at: string;
@@ -94,11 +96,13 @@ export function buildContinuityRows(input: {
 
     const narrative_state = (obs.narrative_state as string) ?? null;
     const action_kind = (hyp.action_kind as string) ?? null;
-    const confidence_band = (hyp.confidence_band as string) ?? null;
     const confidence =
       delib && typeof delib.confidence === "number" && Number.isFinite(delib.confidence)
         ? (delib.confidence as number)
         : ((d.confidence as number) ?? null);
+    // Prefer stored confidence_band; fall back to deriving it from numeric confidence
+    // so older sessions without a stored band still get a consistent label.
+    const confidence_band = (hyp.confidence_band as string) ?? classifyConfidenceBand(confidence);
     const selection_reason = (hyp.selection_reason as string) ?? null;
 
     const tension_kinds = Array.isArray(tens.tension_kinds)
