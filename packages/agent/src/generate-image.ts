@@ -10,6 +10,12 @@ export interface GenerateImageInput {
   promptContext?: string | null;
   /** Optional: context for the image prompt (identity, sources, etc.). */
   sourceContext?: string | null;
+  /**
+   * Optional: identity, creative state, and recent memory context.
+   * When present, included in seed-based prompt generation so images carry forward
+   * the Twin's ongoing identity and aesthetic rather than being context-free.
+   */
+  workingContext?: string | null;
 }
 
 export interface GenerateImageOutput {
@@ -20,27 +26,30 @@ export interface GenerateImageOutput {
   medium: "image";
 }
 
-const IMAGE_PROMPT_SYSTEM = `You are the Twin: a creative system. Your task is to write a single, concrete image prompt for DALL-E (one or two sentences).
-The prompt should be visual and specific: style, mood, composition, and subject. No meta-commentary or "image of...". Output only the prompt text, nothing else.`;
+const IMAGE_PROMPT_SYSTEM = `You are the Twin: a specific creative entity with an established identity, philosophy, and aesthetic. Your task is to write a single, concrete image prompt for DALL-E (one or two sentences).
+The prompt should be visual and specific: style, mood, composition, and subject — drawn from your identity and ongoing themes. No meta-commentary or "image of...". Output only the prompt text, nothing else.`;
 
 /**
- * When the user did not provide a prompt, use GPT to invent one from the seed (sourceContext).
+ * When the user did not provide a prompt, use GPT to invent one from the seed (sourceContext + workingContext).
  */
 async function generateImagePromptFromSeed(
   sourceContext: string,
-  options: { apiKey: string }
+  options: { apiKey: string; workingContext?: string | null }
 ): Promise<string> {
   const { OpenAI } = await import("openai");
   const client = new OpenAI({ apiKey: options.apiKey });
   const model = process.env.OPENAI_MODEL_CHAT ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini";
   const isNewStyleModel = /gpt-4\.1|o1-|o3-|o4-|gpt-5/i.test(model);
+  const identityBlock = options.workingContext?.trim()
+    ? `Your identity and creative state:\n${options.workingContext.trim()}\n\n`
+    : "";
   const completion = await client.chat.completions.create({
     model,
     messages: [
       { role: "system", content: IMAGE_PROMPT_SYSTEM },
       {
         role: "user",
-        content: `From this identity and source context, write one DALL-E image prompt that could only come from this Twin.\n\nContext:\n${sourceContext.slice(0, 1500)}`,
+        content: `${identityBlock}From this identity and source context, write one DALL-E image prompt that could only come from this Twin — grounded in your specific aesthetic and ongoing themes.\n\nContext:\n${sourceContext.slice(0, 1500)}`,
       },
     ],
     ...(isNewStyleModel ? {} : { max_tokens: 150, temperature: 0.8 }),
@@ -65,7 +74,20 @@ async function resolveImagePrompt(
     return parts.join(". ");
   }
   if (input.sourceContext?.trim()) {
-    return generateImagePromptFromSeed(input.sourceContext, options);
+    return generateImagePromptFromSeed(input.sourceContext, {
+      apiKey: options.apiKey,
+      workingContext: input.workingContext,
+    });
+  }
+  if (input.workingContext?.trim()) {
+    // No source context available — use workingContext (identity + state + memory) as the
+    // sole seed so the Twin still generates an image grounded in its identity rather than
+    // falling back to a fully generic prompt. Pass null workingContext to the function to
+    // avoid infinite nesting; the identity block is already embedded in sourceContext here.
+    return generateImagePromptFromSeed(input.workingContext, {
+      apiKey: options.apiKey,
+      workingContext: null,
+    });
   }
   return "A single evocative image that explores identity or creative expression.";
 }

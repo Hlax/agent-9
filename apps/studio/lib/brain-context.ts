@@ -14,6 +14,65 @@ type SupabaseClient = NonNullable<ReturnType<typeof getSupabaseServer>>;
 
 const MAX_MEMORY_SUMMARY_CHARS = 200;
 
+/**
+ * Translate numeric creative state into natural language phrases for LLM consumption.
+ * Returns a concise string of comma-separated phrases (e.g. "high creative tension; recurring ideas").
+ */
+
+// Thresholds chosen to map the 0–1 creative state fields onto a readable 3-tier scale:
+// "high" (top ~30%), "moderate/some" (middle ~40%), absent/low (bottom ~30%).
+// These align with the natural distribution of evolved state values and were chosen so that
+// a fresh default state (most fields at 0.5) reads as "moderate creative energy" without noise.
+const STATE_NARRATIVE_THRESHOLDS = {
+  tension: { high: 0.7, moderate: 0.45 },
+  reflectionNeed: { strong: 0.65, some: 0.4 },
+  ideaRecurrence: { recurring: 0.55, familiar: 0.35 },
+  unfinishedProjects: { present: 0.55 },
+  curiosityLevel: { high: 0.65, low: 0.3 },
+  explorationRate: { converging: 0.3 },
+} as const;
+
+function narrativeCreativeState(state: CreativeStateFields): string {
+  const t = STATE_NARRATIVE_THRESHOLDS;
+  const phrases: string[] = [];
+
+  if (state.creative_tension > t.tension.high) {
+    phrases.push("high creative tension");
+  } else if (state.creative_tension > t.tension.moderate) {
+    phrases.push("moderate creative energy");
+  } else {
+    phrases.push("low creative pressure");
+  }
+
+  if (state.reflection_need > t.reflectionNeed.strong) {
+    phrases.push("strong pull toward reflection");
+  } else if (state.reflection_need > t.reflectionNeed.some) {
+    phrases.push("some reflective need");
+  }
+
+  if (state.idea_recurrence > t.ideaRecurrence.recurring) {
+    phrases.push("recurring ideas demanding attention");
+  } else if (state.idea_recurrence > t.ideaRecurrence.familiar) {
+    phrases.push("familiar ideas resurfacing");
+  }
+
+  if (state.unfinished_projects > t.unfinishedProjects.present) {
+    phrases.push("unfinished work waiting to be continued");
+  }
+
+  if (state.curiosity_level > t.curiosityLevel.high) {
+    phrases.push("high curiosity and exploratory drive");
+  } else if (state.curiosity_level < t.curiosityLevel.low) {
+    phrases.push("consolidating rather than exploring");
+  }
+
+  if (state.recent_exploration_rate < t.explorationRate.converging) {
+    phrases.push("recent sessions converging rather than exploring");
+  }
+
+  return phrases.join("; ") || "balanced creative state";
+}
+
 export interface BrainContextIdentity {
   identity_id: string;
   name: string | null;
@@ -101,8 +160,38 @@ async function loadActiveIdentity(supabase: SupabaseClient) {
 }
 
 /**
+ * Build an identity and voice context block for injection into the generation system prompt.
+ * Includes identity, narrative creative state, and memory as "recently exploring".
+ * Deliberately excludes source items so the generation system prompt stays voice-focused.
+ * Callers pass this as `workingContext` to the generation pipeline.
+ */
+export function buildIdentityVoiceContext(ctx: BrainContextResult): string {
+  const parts: string[] = [];
+  if (ctx.identity) {
+    const id = ctx.identity;
+    const nameAccepted = id.name && id.name_status === "accepted";
+    if (nameAccepted) {
+      parts.push(`Identity: ${id.name}`);
+    }
+    if (id.summary) parts.push(`Summary: ${id.summary.slice(0, 300)}`);
+    if (id.philosophy) parts.push(`Philosophy: ${id.philosophy.slice(0, 300)}`);
+    if (id.embodiment_direction) parts.push(`Embodiment: ${id.embodiment_direction.slice(0, 200)}`);
+    if (id.habitat_direction) parts.push(`Habitat direction: ${id.habitat_direction.slice(0, 200)}`);
+  }
+  const stateNarrative = narrativeCreativeState(ctx.creativeState);
+  parts.push(`Current creative state: ${stateNarrative}`);
+  if (ctx.memorySummaries.length > 0) {
+    parts.push(
+      "Recently exploring:\n" + ctx.memorySummaries.map((s) => `- ${s}`).join("\n")
+    );
+  }
+  return parts.filter(Boolean).join("\n\n");
+}
+
+/**
  * Build a single Working Context string from brain context for the generation prompt.
  * Kept bounded to avoid prompt bloat. Used by session/generation path (no per-segment cap).
+ * Uses narrative creative state and "Recently exploring" memory framing for better LLM utility.
  */
 export function buildWorkingContextString(ctx: BrainContextResult): string {
   const parts: string[] = [];
@@ -120,11 +209,10 @@ export function buildWorkingContextString(ctx: BrainContextResult): string {
       );
     }
   }
-  parts.push(
-    `Creative state: tension=${ctx.creativeState.creative_tension.toFixed(2)} recurrence=${ctx.creativeState.idea_recurrence.toFixed(2)} reflection_need=${ctx.creativeState.reflection_need.toFixed(2)}`
-  );
+  const stateNarrative = narrativeCreativeState(ctx.creativeState);
+  parts.push(`Creative state: ${stateNarrative}`);
   if (ctx.memorySummaries.length > 0) {
-    parts.push("Recent memory:\n" + ctx.memorySummaries.join("\n"));
+    parts.push("Recently exploring:\n" + ctx.memorySummaries.map((s) => `- ${s}`).join("\n"));
   }
   if (ctx.sourceSummary) {
     parts.push("Source context:\n" + ctx.sourceSummary.slice(0, 3000));
@@ -194,11 +282,13 @@ export function buildChatContextWithBudget(
   }
   parts.push(sliceToBudget(identityBlock, CHAT_CONTEXT_BUDGET.identity));
 
-  const creativeLine = `Creative state: tension=${ctx.creativeState.creative_tension.toFixed(2)} recurrence=${ctx.creativeState.idea_recurrence.toFixed(2)} reflection_need=${ctx.creativeState.reflection_need.toFixed(2)}`;
+  const creativeLine = `Creative state: ${narrativeCreativeState(ctx.creativeState)}`;
   parts.push(sliceToBudget(creativeLine, CHAT_CONTEXT_BUDGET.creativeState));
 
   const memoryBlock =
-    ctx.memorySummaries.length > 0 ? "Recent memory:\n" + ctx.memorySummaries.join("\n") : "";
+    ctx.memorySummaries.length > 0
+      ? "Recently exploring:\n" + ctx.memorySummaries.map((s) => `- ${s}`).join("\n")
+      : "";
   parts.push(sliceToBudget(memoryBlock, CHAT_CONTEXT_BUDGET.memory));
 
   const sourceBlock = ctx.sourceSummary
