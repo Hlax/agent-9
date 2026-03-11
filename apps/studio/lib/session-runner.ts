@@ -13,7 +13,7 @@ import {
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { getLatestCreativeState } from "@/lib/creative-state-load";
 import { computePublicCurationBacklog } from "@/lib/curation-backlog";
-import { getBrainContext, buildWorkingContextString } from "@/lib/brain-context";
+import { getBrainContext, buildIdentityVoiceContext } from "@/lib/brain-context";
 import { isProposalEligible } from "@/lib/proposal-eligibility";
 import {
   buildMinimalHabitatPayloadFromConcept,
@@ -253,7 +253,12 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
   const brainContext = await getBrainContext(supabase, {
     project_id: selectedProjectId ?? null,
   });
-  let workingContextString = buildWorkingContextString(brainContext);
+  // Voice context (identity + creative state narrative + memory) goes into the generation
+  // system prompt so the LLM writes as this specific entity with its ongoing concerns.
+  const voiceContext = buildIdentityVoiceContext(brainContext);
+  // Source context (reference material) and focus context (project/thread/idea) go to
+  // the user prompt as additional reference material, distinct from identity/voice.
+  let sourceContext = brainContext.sourceSummary ?? "";
   if (supabase && (selectedProjectId || selectedThreadId || selectedIdeaId)) {
     const focusContext = await getProjectThreadIdeaContext(
       supabase,
@@ -262,7 +267,7 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       selectedIdeaId
     );
     if (focusContext) {
-      workingContextString = [workingContextString, focusContext].filter(Boolean).join("\n\n");
+      sourceContext = [sourceContext, focusContext].filter(Boolean).join("\n\n");
     }
   }
   const derivedPreferMedium = derivePreferredMedium(sessionState, preferMedium, isCron);
@@ -275,7 +280,8 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       ideaThreadId: selectedThreadId ?? undefined,
       ideaId: selectedIdeaId ?? undefined,
       promptContext: promptContext ?? undefined,
-      sourceContext: workingContextString || undefined,
+      workingContext: voiceContext || undefined,
+      sourceContext: sourceContext || undefined,
       preferMedium: derivedPreferMedium ?? undefined,
     },
     { openaiApiKey: process.env.OPENAI_API_KEY ?? undefined }

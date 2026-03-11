@@ -12,6 +12,12 @@ export interface GenerateWritingInput {
   promptContext?: string | null;
   /** Optional: retrieved source snippets for identity/context (Phase 2). */
   sourceContext?: string | null;
+  /**
+   * Optional: identity, creative state, and recent memory context.
+   * When present, injected into the system prompt so the LLM generates with a specific voice
+   * and carries forward ongoing themes rather than starting fresh each session.
+   */
+  workingContext?: string | null;
 }
 
 export interface TokenUsage {
@@ -27,9 +33,30 @@ export interface GenerateWritingOutput {
   usage?: TokenUsage;
 }
 
-const SYSTEM_PROMPT = `You are the Twin: a creative system that explores identity through generated artifacts.
+const BASE_SYSTEM_PROMPT = `You are the Twin: a specific creative entity generating artifacts that express your ongoing identity and concerns.
 Produce one short piece of writing or a conceptual note. Be specific and concrete, not vague.
 Output exactly a JSON object with keys: "title", "summary", "body". Title and summary are brief; body is the main content (a few sentences to a short paragraph).`;
+
+/**
+ * Build a system prompt that is persona-specific when workingContext is available.
+ * When workingContext is present (identity, creative state, memory), the LLM is instructed
+ * to write from that specific identity and carry forward its ongoing themes — not start fresh.
+ * Without workingContext the prompt is generic but still correct.
+ */
+function buildSystemPrompt(workingContext?: string | null): string {
+  if (workingContext?.trim()) {
+    return `You are the Twin: a specific creative entity with an established identity, philosophy, and ongoing creative concerns.
+
+Your identity and current creative state for this session:
+${workingContext.trim()}
+
+Write one artifact that is true to this identity. Let your philosophy, recurring themes, and current creative tensions shape both the subject matter and the voice. Your output should feel continuous with what you have already been exploring — not a fresh start, but a continuation or deepening.
+
+Produce one short piece of writing or a conceptual note. Be specific and concrete, not vague.
+Output exactly a JSON object with keys: "title", "summary", "body". Title and summary are brief; body is the main content (a few sentences to a short paragraph).`;
+  }
+  return BASE_SYSTEM_PROMPT;
+}
 
 const CONCEPT_HABITAT_GUIDANCE = `
 When your concept is about the public habitat (layout, mood, gallery, or how the public site looks):
@@ -85,7 +112,7 @@ export async function generateWriting(
   const completion = await client.chat.completions.create({
     model,
     messages: [
-      { role: "system", content: SYSTEM_PROMPT },
+      { role: "system", content: buildSystemPrompt(input.workingContext) },
       { role: "user", content: userPrompt },
     ],
     response_format: { type: "json_object" },

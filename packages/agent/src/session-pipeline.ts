@@ -26,6 +26,12 @@ export interface SessionContext {
   /** Selected drive for this session (from drive weights). */
   selectedDrive?: CreativeDrive | null;
   promptContext?: string | null;
+  /**
+   * Identity, creative state, and recent memory context for voice-driven generation.
+   * Injected into the generation system prompt so the LLM writes as this specific entity
+   * and carries forward ongoing themes. Distinct from sourceContext (reference material).
+   */
+  workingContext?: string | null;
   /** Optional: retrieved source context for generation (Phase 2 identity seed). */
   sourceContext?: string | null;
   /** When "image", generate an image artifact (OPENAI_MODEL_IMAGE); otherwise writing/concept. */
@@ -79,6 +85,7 @@ export async function runSessionPipeline(
           mode: context.mode,
           promptContext: context.promptContext,
           sourceContext: context.sourceContext,
+          workingContext: context.workingContext,
         },
         { apiKey }
       )
@@ -88,6 +95,7 @@ export async function runSessionPipeline(
           preferMedium: context.preferMedium,
           promptContext: context.promptContext,
           sourceContext: context.sourceContext,
+          workingContext: context.workingContext,
         },
         { apiKey }
       );
