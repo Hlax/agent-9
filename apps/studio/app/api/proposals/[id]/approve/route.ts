@@ -8,9 +8,9 @@ import { isLegalProposalStateTransition } from "@/lib/governance-rules";
 /**
  * POST /api/proposals/[id]/approve — approve a proposal and apply it.
  * Body: { action: 'apply_name' | 'approve_avatar' | 'approve' | 'approve_for_staging' | 'approve_for_publication' }.
- * - apply_name: set active identity.name from proposal title.
- * - approve_avatar: mark proposal approved, update identity.embodiment_direction.
- * - approve: legacy; set proposal_state to 'approved'.
+ * - apply_name: set active identity.name from proposal title; moves proposal to approved_for_staging.
+ * - approve_avatar: update identity.embodiment_direction from proposal; moves proposal to approved_for_staging.
+ * - approve: legacy Harvey override; set proposal_state to 'approved'.
  * - approve_for_staging: set proposal_state to 'approved_for_staging' (gate: agent may build in staging). Canon: concept_to_proposal_flow.md.
  * - approve_for_publication: set proposal_state to 'approved_for_publication'; for habitat proposals upsert public_habitat_content; for avatar_candidate set identity.active_avatar_artifact_id.
  */
@@ -34,11 +34,20 @@ export async function POST(
       .single();
     if (fetchErr || !proposal) return NextResponse.json({ error: "Proposal not found" }, { status: 404 });
 
-    let newState = "approved" as string;
+    // Map each action to a canonical proposal FSM target state.
+    // apply_name and approve_avatar apply a domain side effect and move the
+    // proposal to approved_for_staging — the first legal forward step from
+    // pending_review (pending_review → approved_for_staging is a valid FSM
+    // transition). The legacy "approved" state is unreachable from pending_review
+    // in the current FSM, so these actions no longer target it.
+    let newState = "approved_for_staging" as string;
     if (action === "approve_for_staging") {
       newState = "approved_for_staging";
-    } else if (action === "approve_for_publication") {
+    } else if (action === "approve_for_publication" || action === "approve_publication") {
       newState = "approved_for_publication";
+    } else if (action === "approve") {
+      // Legacy: keep "approved" for callers explicitly requesting it (Harvey override).
+      newState = "approved";
     }
 
     if (!isLegalProposalStateTransition(proposal.proposal_state, newState)) {

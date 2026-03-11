@@ -24,6 +24,14 @@ export interface Identity {
   creative_values: Record<string, unknown> | null;
   embodiment_direction: string | null;
   habitat_direction: string | null;
+  /** Active public avatar; set by Harvey via proposal approve or PATCH /api/identity. */
+  active_avatar_artifact_id: string | null;
+  /** Naming lifecycle state: 'unnamed' | 'proposed' | 'accepted' | 'rejected'. */
+  name_status: string | null;
+  name_rationale: string | null;
+  /** 0.0–1.0 readiness score from the naming evaluator. */
+  naming_readiness_score: number | null;
+  naming_readiness_notes: string | null;
   status: string;
   is_active: boolean;
   created_at: string;

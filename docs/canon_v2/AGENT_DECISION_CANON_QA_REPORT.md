@@ -3,6 +3,7 @@
 **Prepared**: 2026-03-11  
 **Audit scope**: canon_v2 docs vs. repo code as of this commit  
 **Auditor**: Automated QA agent  
+**Stabilization pass**: Issues 2–5 below were fixed in the stabilization pass (see §5 for verdict updates).
 
 ---
 
@@ -15,9 +16,9 @@ The core runtime decision layer is well-implemented and mostly verifiable agains
 **Why not a full YES:**
 
 1. **`ExecutionMode` and `HumanGateReason` are declared but never behaviorally wired.** The runner always emits `executionMode: "auto"` and `humanGateReason: null`. Any canon claim about these fields influencing behavior is unsupported.
-2. **`apply_name` and `approve_avatar` actions in `POST /api/proposals/[id]/approve` are broken by the proposal FSM check.** The FSM transition map has no path that reaches the `"approved"` state, yet both actions map to `newState = "approved"` before the FSM guard runs. This makes both actions return HTTP 400 for proposals in `pending_review` state—which is all agent-created proposals.
-3. **`packages/core/src/types.ts` `Identity` interface is missing four columns** added by migrations (`active_avatar_artifact_id`, `name_status`, `name_rationale`, `naming_readiness_score`, `naming_readiness_notes`). Shared type alignment is broken.
-4. **`manageProposals` bypasses the FSM guard when archiving older proposals.** It directly sets `proposal_state: "archived"` via a Supabase update, without calling `isLegalProposalStateTransition`. This is an undocumented autonomous state mutation.
+2. ~~**`apply_name` and `approve_avatar` actions in `POST /api/proposals/[id]/approve` are broken by the proposal FSM check.**~~ **FIXED**: Both actions now target `approved_for_staging`, a legal FSM transition from `pending_review`.
+3. ~~**`packages/core/src/types.ts` `Identity` interface is missing five columns**~~ **FIXED**: All five fields added (`active_avatar_artifact_id`, `name_status`, `name_rationale`, `naming_readiness_score`, `naming_readiness_notes`).
+4. ~~**`manageProposals` bypasses the FSM guard when archiving older proposals.**~~ **FIXED**: Archival now uses `isLegalProposalStateTransition` guard with an explicit comment.
 
 The safe writeable scope is: **runtime decisions, proposal creation (not application), governance boundary classification, and deliberation trace contents**. `ExecutionMode`/`HumanGateReason` semantics cannot be canonized until wired.
 
