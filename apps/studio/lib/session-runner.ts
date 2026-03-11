@@ -47,6 +47,7 @@ import {
 } from "@/lib/stop-limits";
 import { detectRepetition } from "@/lib/repetition-detection";
 import { addTokenUsage, getRuntimeConfig } from "@/lib/runtime-config";
+import { isLegalProposalStateTransition } from "@/lib/governance-rules";
 import { writeDeliberationTrace } from "./deliberation-trace";
 import { createArchiveEntry } from "@twin/memory";
 
@@ -911,7 +912,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
       const cap = getMaxPendingHabitatLayoutProposals();
       const { data: existingActive } = await supabase
         .from("proposal_record")
-        .select("proposal_record_id, created_at")
+        .select("proposal_record_id, proposal_state, created_at")
         .eq("lane_type", "surface")
         .eq("proposal_role", "habitat_layout")
         .eq("target_surface", "staging_habitat")
@@ -967,21 +968,31 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
             }
 
             if (older.length > 0) {
-              const { error: archiveOlderError } = await supabase
-                .from("proposal_record")
-                .update({
-                  proposal_state: "archived",
-                  updated_at: new Date().toISOString(),
-                })
-                .in(
-                  "proposal_record_id",
-                  older.map((o) => o.proposal_record_id)
-                );
-              if (archiveOlderError) {
-                console.warn("[session] archiving older habitat_layout proposals failed", {
-                  error: archiveOlderError.message,
-                  count: older.length,
-                });
+              // System-initiated staling: the runner is refreshing the newest active
+              // habitat_layout proposal and retiring superseded older ones. Only
+              // proposals for which pending_review/approved_for_staging/staged → archived
+              // is a legal FSM transition are updated. This uses the canonical guard to
+              // keep the archival path consistent with human-driven governance transitions.
+              const legalToArchive = older.filter((o) =>
+                isLegalProposalStateTransition(o.proposal_state as string, "archived")
+              );
+              if (legalToArchive.length > 0) {
+                const { error: archiveOlderError } = await supabase
+                  .from("proposal_record")
+                  .update({
+                    proposal_state: "archived",
+                    updated_at: new Date().toISOString(),
+                  })
+                  .in(
+                    "proposal_record_id",
+                    legalToArchive.map((o) => o.proposal_record_id)
+                  );
+                if (archiveOlderError) {
+                  console.warn("[session] archiving older habitat_layout proposals failed", {
+                    error: archiveOlderError.message,
+                    count: legalToArchive.length,
+                  });
+                }
               }
             }
           }

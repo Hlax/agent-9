@@ -44,7 +44,7 @@ initializeExecutionState
 | **runGeneration** | Call `runSessionPipeline` (mode, drive, project/thread/idea, contexts, preferMedium). Enforce token limit; optionally upload image to storage and set primary artifact. Produces `pipelineResult`, `primaryArtifact`, `tokensUsed`, `derivedPreferMedium`. |
 | **runCritiqueAndEvaluation** | Run critique on primary artifact; compute evaluation signals. Produces `critique` and `evaluation`. |
 | **persistCoreOutputs** | Insert creative_session, artifact, critique_record, evaluation_signal; update artifact with scores; insert generation_run. Order is fixed (see 01_foundation/data_model.md and persistence section below). approval_record is not written by the runner; it is written only by POST /api/artifacts/[id]/approve. |
-| **persistDerivedState** | Insert creative_state_snapshot, optional memory_record, optional archive_entry (when critique_outcome is archive_candidate); recurrence writeback to idea/idea_thread. |
+| **persistDerivedState** | Insert archive_entry (when critique_outcome is archive_candidate), creative_state_snapshot, memory_record; recurrence writeback to idea/idea_thread. |
 | **manageProposals** | Create or refresh proposal_record only when eligible (habitat layout for concept, avatar candidate for image), subject to caps. Does not transition or apply proposals. Sets `proposalCreated`, `traceProposalId`, `traceProposalType`, `decisionSummary`. |
 | **writeTraceAndDeliberation** | Update creative_session with `trace` and `decision_summary`; call `writeDeliberationTrace` with data from state (observations, evidence_checked, hypotheses, execution_mode, human_gate_reason, etc.). |
 | **finalizeResult** | Map state to `SessionRunSuccessPayload` (session_id, artifact_count, persisted, flags, warnings). No DB writes. |
@@ -82,7 +82,7 @@ When `supabase` is null, persist stages no-op and the API returns `persisted: fa
 Within a successful run (supabase non-null, artifact + critique + evaluation present):
 
 1. **persistCoreOutputs**: creative_session → artifact → critique_record → evaluation_signal → artifact score update → generation_run.
-2. **persistDerivedState**: creative_state_snapshot → memory_record → archive_entry (if archive_candidate) → recurrence writeback to idea/idea_thread.
+2. **persistDerivedState**: archive_entry (if archive_candidate) → creative_state_snapshot → memory_record → recurrence writeback to idea/idea_thread.
 3. **manageProposals**: proposal_record inserts only (no state transitions).
 4. **writeTraceAndDeliberation**: creative_session trace/decision_summary update → deliberation_trace insert.
 
