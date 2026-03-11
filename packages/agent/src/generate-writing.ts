@@ -7,6 +7,8 @@ import type { SessionMode } from "@twin/core";
 
 export interface GenerateWritingInput {
   mode: SessionMode;
+  /** When "concept", generate a concept artifact and include habitat guidance. Independent of mode. */
+  preferMedium?: "writing" | "concept" | "image" | null;
   promptContext?: string | null;
   /** Optional: retrieved source snippets for identity/context (Phase 2). */
   sourceContext?: string | null;
@@ -41,7 +43,7 @@ When your concept is about the public habitat (layout, mood, gallery, or how the
 function buildUserPrompt(input: GenerateWritingInput): string {
   const parts: string[] = [];
   parts.push(`Mode: ${input.mode}.`);
-  if (input.mode === "reflect") {
+  if (input.preferMedium === "concept") {
     parts.push(CONCEPT_HABITAT_GUIDANCE.trim());
   }
   if (input.promptContext?.trim()) {
@@ -75,7 +77,7 @@ export async function generateWriting(
 
   const userPrompt = buildUserPrompt(input);
 
-  const isConcept = input.mode === "reflect";
+  const isConcept = input.preferMedium === "concept";
   const model = isConcept
     ? (process.env.OPENAI_MODEL_CONCEPT ?? process.env.OPENAI_MODEL_GENERATION ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini")
     : (process.env.OPENAI_MODEL_GENERATION ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini");
@@ -116,7 +118,7 @@ export async function generateWriting(
       : raw.slice(0, 10000);
 
   const content_text = body;
-  const medium: "writing" | "concept" = input.mode === "reflect" ? "concept" : "writing";
+  const medium: "writing" | "concept" = isConcept ? "concept" : "writing";
   const usage =
     completion.usage?.prompt_tokens != null && completion.usage?.completion_tokens != null
       ? { prompt_tokens: completion.usage.prompt_tokens, completion_tokens: completion.usage.completion_tokens }

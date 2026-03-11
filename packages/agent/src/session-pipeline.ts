@@ -85,6 +85,7 @@ export async function runSessionPipeline(
     : await generateWriting(
         {
           mode: context.mode,
+          preferMedium: context.preferMedium,
           promptContext: context.promptContext,
           sourceContext: context.sourceContext,
         },

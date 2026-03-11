@@ -8,9 +8,11 @@ import {
   computeSessionMode,
   selectDrive,
   type CreativeStateFields,
+  type CreativeStateSignals,
 } from "@twin/evaluation";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { getLatestCreativeState } from "@/lib/creative-state-load";
+import { computePublicCurationBacklog } from "@/lib/curation-backlog";
 import { getBrainContext, buildWorkingContextString } from "@/lib/brain-context";
 import { isProposalEligible } from "@/lib/proposal-eligibility";
 import {
@@ -158,8 +160,15 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
   const supabase = getSupabaseServer();
 
   const { state: previousState } = await getLatestCreativeState(supabase);
-  const mode = computeSessionMode(previousState);
-  const driveWeights = computeDriveWeights(previousState);
+
+  // C-4: Override public_curation_backlog with a live proposal count before session-mode
+  // computation so the mode selection reflects current review queue pressure, not stale
+  // snapshot data from the previous session.
+  const liveBacklog = await computePublicCurationBacklog(supabase);
+  const sessionState = { ...previousState, public_curation_backlog: liveBacklog };
+
+  const mode = computeSessionMode(sessionState);
+  const driveWeights = computeDriveWeights(sessionState);
   const selectedDrive = selectDrive(driveWeights);
   let selectedProjectId: string | null = null;
   let selectedThreadId: string | null = null;
@@ -246,12 +255,11 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       workingContextString = [workingContextString, focusContext].filter(Boolean).join("\n\n");
     }
   }
-  const derivedPreferMedium = derivePreferredMedium(previousState, preferMedium, isCron);
-  const effectiveMode = derivedPreferMedium === "concept" ? "reflect" : mode;
+  const derivedPreferMedium = derivePreferredMedium(sessionState, preferMedium, isCron);
 
   const result = await runSessionPipeline(
     {
-      mode: effectiveMode,
+      mode,
       selectedDrive,
       projectId: selectedProjectId ?? undefined,
       ideaThreadId: selectedThreadId ?? undefined,
@@ -662,10 +670,29 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       throw new SessionRunError(500, { error: `Generation run insert failed: ${genError.message}` });
     }
 
-    const nextState = updateCreativeState(previousState, evaluation, {
-      repetitionDetected,
-      isReflection: effectiveMode === "reflect",
-    });
+    // A-6: Derive creative-state signals from session context.
+    // exploredNewMedium: true when this artifact's medium was absent from the last 5 prior artifacts.
+    // addedUnfinishedWork: true when critique marks the artifact as an archive candidate.
+    // isReflection: true when the session mode was "reflect".
+    // Medium history is queried globally (not per-project) because expression_diversity
+    // is a system-level creative-state field for a single-identity Twin, not per-project.
+    const { data: recentArtifactRows } = await supabase
+      .from("artifact")
+      .select("medium")
+      .neq("artifact_id", artifact.artifact_id)
+      .order("created_at", { ascending: false })
+      .limit(5);
+    const recentMediums = (recentArtifactRows ?? [])
+      .map((a: { medium: string | null }) => a.medium)
+      .filter(Boolean) as string[];
+    const sessionSignals: CreativeStateSignals = {
+      isReflection: mode === "reflect",
+      exploredNewMedium:
+        !!artifact.medium && recentMediums.length > 0 && !recentMediums.includes(artifact.medium),
+      addedUnfinishedWork: critique.critique_outcome === "archive_candidate",
+    };
+
+    const nextState = updateCreativeState(previousState, evaluation, repetitionDetected, sessionSignals);
     const stateSnapshotRow = stateToSnapshotRow(
       nextState,
       result.session.session_id,

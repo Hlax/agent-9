@@ -63,6 +63,7 @@ export async function POST(request: Request) {
     const artifact_id = body?.artifact_id ?? null;
     const target_surface = typeof body?.target_surface === "string" ? body.target_surface : null;
     const proposal_type = typeof body?.proposal_type === "string" ? body.proposal_type : null;
+    const proposal_role = typeof body?.proposal_role === "string" ? body.proposal_role : null;
     const preview_uri = body?.preview_uri ?? null;
     const created_by = body?.created_by ?? (user?.email ?? "harvey");
     if (!title) return NextResponse.json({ error: "title is required" }, { status: 400 });
@@ -82,6 +83,7 @@ export async function POST(request: Request) {
     if (artifact_id != null) row.artifact_id = artifact_id;
     if (target_surface != null) row.target_surface = target_surface;
     if (proposal_type != null) row.proposal_type = proposal_type;
+    if (proposal_role != null) row.proposal_role = proposal_role;
     const { data, error } = await supabase.from("proposal_record").insert(row).select("proposal_record_id").single();
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ proposal_record_id: data?.proposal_record_id, ...row });

@@ -81,10 +81,14 @@ function noveltyScore(e: EvaluationSignal): number {
 }
 
 /**
- * Signals for creative state update. All fields optional; falsy values are safe defaults.
+ * Boolean session signals that govern creative-state deltas (A-6).
+ * Derived by the caller (session-runner) from runtime context; not persisted.
+ *
+ * - isReflection: session mode was "reflect".
+ * - exploredNewMedium: artifact medium was absent from the last N recent artifacts.
+ * - addedUnfinishedWork: critique outcome was "archive_candidate" — work worth returning to but not done.
  */
 export interface CreativeStateSignals {
-  repetitionDetected?: boolean;
   isReflection?: boolean;
   exploredNewMedium?: boolean;
   addedUnfinishedWork?: boolean;
@@ -94,12 +98,13 @@ export interface CreativeStateSignals {
  * Update creative state after one artifact using evaluation signals.
  * Returns new state object; caller persists as creative_state_snapshot.
  * If repetitionDetected is true, bumps reflection_need so next session tends to reflect.
- * If isReflection is true, decreases reflection_need.
+ * Optional signals provide session-level context that evaluation scores alone cannot capture.
  */
 export function updateCreativeState(
   prev: CreativeStateFields,
   evaluation: EvaluationSignal,
-  signals?: CreativeStateSignals | boolean
+  repetitionDetected?: boolean,
+  signals?: CreativeStateSignals
 ): CreativeStateFields {
   // Support legacy boolean third arg for backward compatibility.
   const resolved: CreativeStateSignals =
@@ -113,6 +118,9 @@ export function updateCreativeState(
   const emergence = evaluation.emergence_score ?? 0.5;
   const alignment = evaluation.alignment_score ?? 0.5;
   const novelty = noveltyScore(evaluation);
+  const isReflection = signals?.isReflection ?? false;
+  const exploredNewMedium = signals?.exploredNewMedium ?? false;
+  const addedUnfinishedWork = signals?.addedUnfinishedWork ?? false;
 
   const next: CreativeStateFields = { ...prev };
 
