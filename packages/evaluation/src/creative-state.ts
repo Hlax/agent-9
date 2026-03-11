@@ -84,11 +84,13 @@ function noveltyScore(e: EvaluationSignal): number {
  * Boolean session signals that govern creative-state deltas (A-6).
  * Derived by the caller (session-runner) from runtime context; not persisted.
  *
+ * - repetitionDetected: the session output repeated a recent artifact pattern; bumps reflection_need.
  * - isReflection: session mode was "reflect".
  * - exploredNewMedium: artifact medium was absent from the last N recent artifacts.
  * - addedUnfinishedWork: critique outcome was "archive_candidate" — work worth returning to but not done.
  */
 export interface CreativeStateSignals {
+  repetitionDetected?: boolean;
   isReflection?: boolean;
   exploredNewMedium?: boolean;
   addedUnfinishedWork?: boolean;
@@ -97,23 +99,29 @@ export interface CreativeStateSignals {
 /**
  * Update creative state after one artifact using evaluation signals.
  * Returns new state object; caller persists as creative_state_snapshot.
- * If repetitionDetected is true, bumps reflection_need so next session tends to reflect.
+ * If signals.repetitionDetected (or a boolean true passed as signals) is true,
+ * bumps reflection_need so next session tends to reflect.
  * Optional signals provide session-level context that evaluation scores alone cannot capture.
+ * For backward compatibility, passing a boolean as the third argument is treated as
+ * { repetitionDetected: signals }.
  */
 export function updateCreativeState(
   prev: CreativeStateFields,
   evaluation: EvaluationSignal,
-  repetitionDetected?: boolean,
-  signals?: CreativeStateSignals
+  signals?: CreativeStateSignals | boolean
 ): CreativeStateFields {
+  const resolved: CreativeStateSignals =
+    typeof signals === "boolean" ? { repetitionDetected: signals } : (signals ?? {});
+  const repetitionDetected = resolved.repetitionDetected ?? false;
+  const isReflection = resolved.isReflection ?? false;
+  const exploredNewMedium = resolved.exploredNewMedium ?? false;
+  const addedUnfinishedWork = resolved.addedUnfinishedWork ?? false;
+
   const pull = evaluation.pull_score ?? 0.5;
   const recurrence = evaluation.recurrence_score ?? 0.2;
   const emergence = evaluation.emergence_score ?? 0.5;
   const alignment = evaluation.alignment_score ?? 0.5;
   const novelty = noveltyScore(evaluation);
-  const isReflection = signals?.isReflection ?? false;
-  const exploredNewMedium = signals?.exploredNewMedium ?? false;
-  const addedUnfinishedWork = signals?.addedUnfinishedWork ?? false;
 
   const next: CreativeStateFields = { ...prev };
 
