@@ -61,15 +61,18 @@ export function computeEvaluationSignals(input: EvaluationInput): EvaluationSign
     case "continue":
       pull_score = 0.7;
       fertility_score = 0.6;
+      recurrence_score = 0.5;
       break;
     case "branch":
       emergence_score = 0.75;
       fertility_score = 0.8;
       pull_score = 0.6;
+      recurrence_score = 0.55;
       break;
     case "shift_medium":
       emergence_score = 0.65;
       alignment_score = 0.5;
+      recurrence_score = 0.45;
       break;
     case "reflect":
       recurrence_score = 0.6;
@@ -79,11 +82,13 @@ export function computeEvaluationSignals(input: EvaluationInput): EvaluationSign
       pull_score = 0.35;
       fertility_score = 0.35;
       alignment_score = 0.45;
+      recurrence_score = 0.2;
       break;
     case "stop":
       pull_score = 0.25;
       fertility_score = 0.3;
       alignment_score = 0.4;
+      recurrence_score = 0.1;
       break;
     default:
       break;

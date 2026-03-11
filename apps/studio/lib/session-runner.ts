@@ -692,7 +692,7 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       addedUnfinishedWork: critique.critique_outcome === "archive_candidate",
     };
 
-    const nextState = updateCreativeState(previousState, evaluation, repetitionDetected, sessionSignals);
+    const nextState = updateCreativeState(previousState, evaluation, { repetitionDetected, ...sessionSignals });
     const stateSnapshotRow = stateToSnapshotRow(
       nextState,
       result.session.session_id,
@@ -729,8 +729,9 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
     }
 
     // A-2: Recurrence writeback — propagate evaluation.recurrence_score to the selected idea and thread.
+    // Only writes when recurrence_score is non-null to avoid clearing an existing score from a prior session.
     // Uses direct overwrite (smaller scope than EWA for this PR). Failures are soft-logged and do not abort the session.
-    if (selectedIdeaId) {
+    if (selectedIdeaId && evaluation.recurrence_score !== null) {
       const { error: ideaRecurrenceError } = await supabase
         .from("idea")
         .update({ recurrence_score: evaluation.recurrence_score, updated_at: new Date().toISOString() })
@@ -742,7 +743,7 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
         });
       }
     }
-    if (selectedThreadId) {
+    if (selectedThreadId && evaluation.recurrence_score !== null) {
       const { error: threadRecurrenceError } = await supabase
         .from("idea_thread")
         .update({ recurrence_score: evaluation.recurrence_score, updated_at: new Date().toISOString() })
