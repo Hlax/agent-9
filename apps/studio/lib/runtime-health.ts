@@ -150,7 +150,9 @@ function dominantLabel(labels: string[], windowSize: number): { label: string; c
   const entries = Object.entries(counts);
   if (entries.length === 0) return null;
   entries.sort((a, b) => b[1] - a[1]);
-  const [label, count] = entries[0];
+  const topEntry = entries[0];
+  if (!topEntry) return null;
+  const [label, count] = topEntry;
   if (count < Math.max(3, Math.ceil(windowSize / 2))) {
     return null;
   }
