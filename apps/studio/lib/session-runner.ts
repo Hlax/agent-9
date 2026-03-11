@@ -8,6 +8,7 @@ import {
   computeSessionMode,
   selectDrive,
   type CreativeStateFields,
+  type CreativeStateSignals,
 } from "@twin/evaluation";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { getLatestCreativeState } from "@/lib/creative-state-load";
@@ -659,13 +660,29 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       throw new SessionRunError(500, { error: `Generation run insert failed: ${genError.message}` });
     }
 
-    const nextState = (
-      updateCreativeState as (
-        prev: Parameters<typeof updateCreativeState>[0],
-        evalSig: Parameters<typeof updateCreativeState>[1],
-        repetition?: boolean
-      ) => ReturnType<typeof updateCreativeState>
-    )(previousState, evaluation, repetitionDetected);
+    // A-6: Derive creative-state signals from session context.
+    // exploredNewMedium: true when this artifact's medium was absent from the last 5 prior artifacts.
+    // addedUnfinishedWork: true when critique marks the artifact as an archive candidate.
+    // isReflection: true when the session mode was "reflect".
+    // Medium history is queried globally (not per-project) because expression_diversity
+    // is a system-level creative-state field for a single-identity Twin, not per-project.
+    const { data: recentArtifactRows } = await supabase
+      .from("artifact")
+      .select("medium")
+      .neq("artifact_id", artifact.artifact_id)
+      .order("created_at", { ascending: false })
+      .limit(5);
+    const recentMediums = (recentArtifactRows ?? [])
+      .map((a: { medium: string | null }) => a.medium)
+      .filter(Boolean) as string[];
+    const sessionSignals: CreativeStateSignals = {
+      isReflection: mode === "reflect",
+      exploredNewMedium:
+        !!artifact.medium && recentMediums.length > 0 && !recentMediums.includes(artifact.medium),
+      addedUnfinishedWork: critique.critique_outcome === "archive_candidate",
+    };
+
+    const nextState = updateCreativeState(previousState, evaluation, repetitionDetected, sessionSignals);
     const stateSnapshotRow = stateToSnapshotRow(
       nextState,
       result.session.session_id,
