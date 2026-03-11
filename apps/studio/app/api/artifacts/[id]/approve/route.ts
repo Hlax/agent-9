@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { createClient } from "@/lib/supabase/server";
 
-import { APPROVAL_ACTIONS } from "@/lib/governance-rules";
+import { APPROVAL_ACTIONS, isLegalArtifactApprovalTransition } from "@/lib/governance-rules";
 
 const ALLOWED_STATES = APPROVAL_ACTIONS;
 
@@ -61,6 +61,28 @@ export async function POST(
       return NextResponse.json(
         { error: "Database not configured" },
         { status: 503 }
+      );
+    }
+
+    const { data: existing, error: fetchError } = await supabase
+      .from("artifact")
+      .select("current_approval_state")
+      .eq("artifact_id", artifactId)
+      .single();
+    if (fetchError || !existing) {
+      return NextResponse.json(
+        { error: "Artifact not found" },
+        { status: 404 }
+      );
+    }
+
+    const currentState = existing.current_approval_state as string | null;
+    if (!isLegalArtifactApprovalTransition(currentState, approval_state)) {
+      return NextResponse.json(
+        {
+          error: `Cannot transition artifact approval from '${currentState ?? "none"}' to '${approval_state}'.`,
+        },
+        { status: 400 }
       );
     }
 

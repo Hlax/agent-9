@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { writeChangeRecord } from "@/lib/change-record";
 import { validateHabitatPayload, collectArtifactIdsFromPayload } from "@/lib/habitat-payload";
+import { isLegalProposalStateTransition } from "@/lib/governance-rules";
 
 /**
  * POST /api/proposals/[id]/approve — approve a proposal and apply it.
@@ -38,6 +39,15 @@ export async function POST(
       newState = "approved_for_staging";
     } else if (action === "approve_for_publication") {
       newState = "approved_for_publication";
+    }
+
+    if (!isLegalProposalStateTransition(proposal.proposal_state, newState)) {
+      return NextResponse.json(
+        {
+          error: `Cannot transition proposal from '${proposal.proposal_state}' to '${newState}'.`,
+        },
+        { status: 400 }
+      );
     }
 
     const approvedBy = user?.email ?? "harvey";

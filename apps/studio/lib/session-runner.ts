@@ -1,4 +1,14 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { runSessionPipeline } from "@twin/agent";
+import type { SessionPipelineResult } from "@twin/agent";
+import type {
+  Artifact,
+  CreativeSession,
+  CreativeDrive,
+  CritiqueRecord,
+  EvaluationSignal,
+  SessionMode,
+} from "@twin/core";
 import {
   runCritique,
   computeEvaluationSignals,
@@ -7,10 +17,12 @@ import {
   computeDriveWeights,
   computeSessionMode,
   selectDrive,
+  defaultCreativeState,
   type CreativeStateFields,
   type CreativeStateSignals,
 } from "@twin/evaluation";
 import { getSupabaseServer } from "@/lib/supabase-server";
+import type { BrainContextResult } from "@/lib/brain-context";
 import { getLatestCreativeState } from "@/lib/creative-state-load";
 import { computePublicCurationBacklog } from "@/lib/curation-backlog";
 import { getBrainContext, buildIdentityVoiceContext } from "@/lib/brain-context";
@@ -35,9 +47,10 @@ import {
 } from "@/lib/stop-limits";
 import { detectRepetition } from "@/lib/repetition-detection";
 import { addTokenUsage, getRuntimeConfig } from "@/lib/runtime-config";
+import { writeDeliberationTrace } from "./deliberation-trace";
 import { createArchiveEntry } from "@twin/memory";
 
-/** Create bucket "artifacts" in Supabase Dashboard → Storage if missing. */
+/** Create bucket "artifacts" in Supabase Dashboard â†’ Storage if missing. */
 const ARTIFACTS_BUCKET = "artifacts";
 
 export type PreferredMedium = "writing" | "concept" | "image";
@@ -78,6 +91,71 @@ export class SessionRunError extends Error {
   }
 }
 
+/** Source of project/thread/idea selection for this session. */
+type SelectionSource = "archive" | "project_thread" | null;
+
+/** Decision summary written to session trace and deliberation. */
+interface DecisionSummary {
+  project_reason: string | null;
+  thread_reason: string | null;
+  idea_reason: string | null;
+  rejected_alternatives: string[];
+  next_action: string | null;
+  confidence: number;
+}
+
+/**
+ * Shared execution state for the staged session orchestrator.
+ * All stage helpers take and return this; deliberation trace is built from it.
+ * When supabase is null, persist stages no-op and finalizeResult returns persisted: false.
+ */
+interface SessionExecutionState {
+  supabase: SupabaseClient | null;
+  createdBy: string;
+  isCron: boolean;
+  /** Creative state from latest snapshot (or default). */
+  previousState: CreativeStateFields;
+  /** Live proposal backlog used for mode/drive. */
+  liveBacklog: number;
+  sessionMode: SessionMode;
+  selectedDrive: CreativeDrive | null;
+  selectionSource: SelectionSource;
+  selectedProjectId: string | null;
+  selectedThreadId: string | null;
+  selectedIdeaId: string | null;
+  /** Archive was available and used (for evidence_checked_json). */
+  archiveCandidateAvailable: boolean;
+  brainContext: BrainContextResult | null;
+  workingContext: string | null;
+  sourceContext: string | null;
+  /** Raw pipeline result (session + artifacts array). */
+  pipelineResult: SessionPipelineResult | null;
+  /** Primary artifact chosen for this run (pipelineResult.artifacts[0] or after image upload). */
+  primaryArtifact: Artifact | null;
+  derivedPreferMedium: PreferredMedium | null;
+  tokensUsed: number | undefined;
+  critique: CritiqueRecord | null;
+  evaluation: EvaluationSignal | null;
+  repetitionDetected: boolean;
+  archiveEntryCreated: boolean;
+  recurrenceUpdated: boolean;
+  recurrenceAttempted: boolean;
+  recurrenceAllSucceeded: boolean;
+  proposalCreated: boolean;
+  memoryRecordCreated: boolean;
+  traceProposalId: string | null;
+  traceProposalType: string | null;
+  decisionSummary: DecisionSummary;
+  warnings: string[];
+  executionMode: "auto" | "proposal_only" | "human_required";
+  humanGateReason: string | null;
+  /** For deliberation: runtime metabolism mode (e.g. cron vs manual). */
+  metabolismMode: string;
+  /** Explicit preferMedium from options (overrides derived when set). */
+  preferMedium: PreferredMedium | null;
+  promptContext: string | null;
+}
+
 /**
  * Lightweight classification for artifact role.
  * This is intentionally narrow for now and can be evolved as metabolism improves.
@@ -116,12 +194,12 @@ function derivePreferredMedium(
     public_curation_backlog,
   } = state;
 
-  // High reflection need or many unfinished projects → concept artifacts.
+  // High reflection need or many unfinished projects â†’ concept artifacts.
   if (reflection_need > 0.65 || unfinished_projects > 0.55) {
     return "concept";
   }
 
-  // Low avatar alignment with growing public backlog or low expression diversity under tension → image.
+  // Low avatar alignment with growing public backlog or low expression diversity under tension â†’ image.
   if (
     (avatar_alignment < 0.4 && public_curation_backlog > 0.4) ||
     (expression_diversity < 0.35 && creative_tension > 0.5)
@@ -142,7 +220,7 @@ function derivePreferredMedium(
  * Fetch image from URL and upload to Supabase Storage. Returns public URL or null.
  */
 async function uploadImageToStorage(
-  supabase: NonNullable<ReturnType<typeof getSupabaseServer>>,
+  supabase: SupabaseClient,
   imageUrl: string,
   sessionId: string,
   artifactId: string
@@ -161,33 +239,88 @@ async function uploadImageToStorage(
   return urlData?.publicUrl ?? null;
 }
 
-/**
- * Shared internal runner used by both manual POST /api/session/run and cron.
- * Throws SessionRunError on handled failures so callers can map to HTTP.
- */
-export async function runSessionInternal(options: SessionRunOptions): Promise<SessionRunSuccessPayload> {
-  const { createdBy, isCron, promptContext, preferMedium } = options;
-  const supabase = getSupabaseServer();
+function initializeExecutionState(
+  options: SessionRunOptions,
+  supabase: SupabaseClient | null
+): SessionExecutionState {
+  const { createdBy, isCron, preferMedium, promptContext } = options;
+  return {
+    supabase,
+    createdBy,
+    isCron,
+    preferMedium: preferMedium ?? null,
+    promptContext: promptContext ?? null,
+    previousState: defaultCreativeState(),
+    liveBacklog: 0,
+    sessionMode: "explore",
+    selectedDrive: null,
+    selectionSource: null,
+    selectedProjectId: null,
+    selectedThreadId: null,
+    selectedIdeaId: null,
+    archiveCandidateAvailable: false,
+    brainContext: null,
+    workingContext: null,
+    sourceContext: null,
+    pipelineResult: null,
+    primaryArtifact: null,
+    derivedPreferMedium: null,
+    tokensUsed: undefined,
+    critique: null,
+    evaluation: null,
+    repetitionDetected: false,
+    archiveEntryCreated: false,
+    recurrenceUpdated: false,
+    recurrenceAttempted: false,
+    recurrenceAllSucceeded: true,
+    proposalCreated: false,
+    memoryRecordCreated: false,
+    traceProposalId: null,
+    traceProposalType: null,
+    decisionSummary: {
+      project_reason: null,
+      thread_reason: null,
+      idea_reason: null,
+      rejected_alternatives: [],
+      next_action: null,
+      confidence: 0.7,
+    },
+    warnings: [],
+    executionMode: "auto",
+    humanGateReason: null,
+    metabolismMode: "manual",
+  };
+}
 
-  const { state: previousState } = await getLatestCreativeState(supabase);
+async function loadCreativeStateAndBacklog(
+  state: SessionExecutionState
+): Promise<SessionExecutionState> {
+  const { state: previousState } = await getLatestCreativeState(state.supabase);
+  const liveBacklog = await computePublicCurationBacklog(state.supabase);
+  return { ...state, previousState, liveBacklog };
+}
 
-  // C-4: Override public_curation_backlog with a live proposal count before session-mode
-  // computation so the mode selection reflects current review queue pressure, not stale
-  // snapshot data from the previous session.
-  const liveBacklog = await computePublicCurationBacklog(supabase);
-  const sessionState = { ...previousState, public_curation_backlog: liveBacklog };
-
-  const mode = computeSessionMode(sessionState);
+function selectModeAndDrive(state: SessionExecutionState): SessionExecutionState {
+  const sessionState = { ...state.previousState, public_curation_backlog: state.liveBacklog };
+  const sessionMode = computeSessionMode(sessionState);
   const driveWeights = computeDriveWeights(sessionState);
   const selectedDrive = selectDrive(driveWeights);
-  let selectedProjectId: string | null = null;
-  let selectedThreadId: string | null = null;
-  let selectedIdeaId: string | null = null;
-  let selectionSource: "archive" | "project_thread" | null = null;
+  return { ...state, sessionMode, selectedDrive };
+}
+
+async function selectFocus(state: SessionExecutionState): Promise<SessionExecutionState> {
+  let {
+    selectedProjectId,
+    selectedThreadId,
+    selectedIdeaId,
+    selectionSource,
+    archiveCandidateAvailable,
+    decisionSummary,
+  } = state;
+  const { supabase, sessionMode } = state;
 
   if (supabase) {
-    // For return sessions, prefer resurfacing from archive entries when available.
-    if (mode === "return") {
+    if (sessionMode === "return") {
       const { data: archives } = await supabase
         .from("archive_entry")
         .select("project_id, idea_thread_id, idea_id, recurrence_score, creative_pull, created_at")
@@ -195,8 +328,8 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
         .limit(50);
 
       if (archives && archives.length > 0) {
+        archiveCandidateAvailable = true;
         const nowMs = Date.now();
-        // Configurable half-life for archive recency decay. Canon: archive_and_return.md §6.
         const decayHalfLifeDays = getArchiveDecayHalfLifeDays();
         const weights = archives.map((row) => {
           const r = (row.recurrence_score as number | null) ?? 0.5;
@@ -225,6 +358,19 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
           selectedThreadId = (chosen.idea_thread_id as string | null) ?? null;
           selectedIdeaId = (chosen.idea_id as string | null) ?? null;
           selectionSource = "archive";
+          decisionSummary = {
+            ...decisionSummary,
+            project_reason:
+              "Return session: selected project from archive entries weighted by recurrence, pull, and recency.",
+            thread_reason:
+              "Thread comes from chosen archive entry with unresolved or paused work.",
+            idea_reason: selectedIdeaId
+              ? "Selected idea linked to the chosen thread, biased toward higher recurrence and pull when available."
+              : "No specific idea was selected; session used project/thread and identity/context only.",
+            rejected_alternatives: [
+              "Other archive entries had lower combined recurrence, pull, or were older.",
+            ],
+          };
           console.log("[session] selection: return_from_archive", {
             archive_project: selectedProjectId,
             archive_thread: selectedThreadId,
@@ -234,13 +380,25 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       }
     }
 
-    // Fallback (or non-return modes): regular project/thread/idea selection.
     if (!selectedProjectId && !selectedThreadId && !selectedIdeaId) {
       const selection = await selectProjectAndThread(supabase);
       selectedProjectId = selection.projectId;
       selectedThreadId = selection.ideaThreadId;
       selectedIdeaId = selection.ideaId;
       selectionSource = "project_thread";
+      decisionSummary = {
+        ...decisionSummary,
+        project_reason:
+          "Selected active project via project/thread selection (weighted by thread recurrence and creative pull).",
+        thread_reason:
+          "Selected active thread for the project, weighted by recurrence_score and creative_pull.",
+        idea_reason: selectedIdeaId
+          ? "Selected idea linked to the chosen thread, biased toward higher recurrence and pull when available."
+          : "No specific idea was selected; session used project/thread and identity/context only.",
+        rejected_alternatives: [
+          "Other active threads or ideas scored lower on recurrence and creative pull.",
+        ],
+      };
       if (selectedProjectId || selectedThreadId || selectedIdeaId) {
         console.log("[session] selection: project_thread_idea", {
           project: selectedProjectId,
@@ -250,78 +408,109 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       }
     }
   }
-  const brainContext = await getBrainContext(supabase, {
-    project_id: selectedProjectId ?? null,
+
+  return {
+    ...state,
+    selectedProjectId,
+    selectedThreadId,
+    selectedIdeaId,
+    selectionSource,
+    archiveCandidateAvailable,
+    decisionSummary,
+  };
+}
+
+async function buildContexts(state: SessionExecutionState): Promise<SessionExecutionState> {
+  const brainContext = await getBrainContext(state.supabase, {
+    project_id: state.selectedProjectId ?? null,
   });
-  // Voice context (identity + creative state narrative + memory) goes into the generation
-  // system prompt so the LLM writes as this specific entity with its ongoing concerns.
-  const voiceContext = buildIdentityVoiceContext(brainContext);
-  // Source context (reference material) and focus context (project/thread/idea) go to
-  // the user prompt as additional reference material, distinct from identity/voice.
+  const workingContext = buildIdentityVoiceContext(brainContext);
   let sourceContext = brainContext.sourceSummary ?? "";
-  if (supabase && (selectedProjectId || selectedThreadId || selectedIdeaId)) {
+  if (
+    state.supabase &&
+    (state.selectedProjectId || state.selectedThreadId || state.selectedIdeaId)
+  ) {
     const focusContext = await getProjectThreadIdeaContext(
-      supabase,
-      selectedProjectId,
-      selectedThreadId,
-      selectedIdeaId
+      state.supabase,
+      state.selectedProjectId,
+      state.selectedThreadId,
+      state.selectedIdeaId
     );
     if (focusContext) {
       sourceContext = [sourceContext, focusContext].filter(Boolean).join("\n\n");
     }
   }
-  const derivedPreferMedium = derivePreferredMedium(sessionState, preferMedium, isCron);
+  return { ...state, brainContext, workingContext, sourceContext };
+}
 
-  const result = await runSessionPipeline(
+async function runGeneration(state: SessionExecutionState): Promise<SessionExecutionState> {
+  const sessionState = {
+    ...state.previousState,
+    public_curation_backlog: state.liveBacklog,
+  };
+  const derivedPreferMedium = derivePreferredMedium(
+    sessionState,
+    state.preferMedium,
+    state.isCron
+  );
+  const pipelineResult = await runSessionPipeline(
     {
-      mode,
-      selectedDrive,
-      projectId: selectedProjectId ?? undefined,
-      ideaThreadId: selectedThreadId ?? undefined,
-      ideaId: selectedIdeaId ?? undefined,
-      promptContext: promptContext ?? undefined,
-      workingContext: voiceContext || undefined,
-      sourceContext: sourceContext || undefined,
-      preferMedium: derivedPreferMedium ?? undefined,
+      mode: state.sessionMode,
+      selectedDrive: state.selectedDrive,
+      projectId: state.selectedProjectId ?? undefined,
+      ideaThreadId: state.selectedThreadId ?? undefined,
+      ideaId: state.selectedIdeaId ?? undefined,
+      promptContext: state.promptContext ?? undefined,
+      workingContext: state.workingContext || undefined,
+      sourceContext: state.sourceContext || undefined,
+      preferMedium: (state.preferMedium ?? derivedPreferMedium) ?? undefined,
     },
     { openaiApiKey: process.env.OPENAI_API_KEY ?? undefined }
   );
-
-  const tokensUsed = "tokensUsed" in result && typeof result.tokensUsed === "number" ? result.tokensUsed : undefined;
+  const tokensUsed =
+    "tokensUsed" in pipelineResult && typeof pipelineResult.tokensUsed === "number"
+      ? pipelineResult.tokensUsed
+      : undefined;
   if (isOverTokenLimit(tokensUsed)) {
     throw new SessionRunError(400, {
       error: "Token limit exceeded; session aborted.",
-      session_id: result.session.session_id,
+      session_id: pipelineResult.session.session_id,
       tokens_used: tokensUsed,
     });
   }
-
   const maxArtifacts = getMaxArtifactsPerSession();
-  const artifacts = result.artifacts.slice(0, maxArtifacts);
-  let artifact = artifacts[0];
-  if (!artifact) {
-    return {
-      session_id: result.session.session_id,
-      artifact_count: 0,
-      persisted: Boolean(supabase),
-      requested_medium: derivedPreferMedium ?? undefined,
-      artifact_medium: null,
-      warnings: [],
-    };
-  }
-
-  if (artifact.medium === "image" && artifact.content_uri && supabase) {
+  const artifacts = pipelineResult.artifacts.slice(0, maxArtifacts);
+  let primaryArtifact: Artifact | null = artifacts[0] ?? null;
+  if (primaryArtifact && state.supabase && primaryArtifact.medium === "image" && primaryArtifact.content_uri) {
     const storageUrl = await uploadImageToStorage(
-      supabase,
-      artifact.content_uri,
-      result.session.session_id,
-      artifact.artifact_id
+      state.supabase,
+      primaryArtifact.content_uri,
+      pipelineResult.session.session_id,
+      primaryArtifact.artifact_id
     );
     if (storageUrl) {
-      artifact = { ...artifact, content_uri: storageUrl, preview_uri: storageUrl };
+      primaryArtifact = {
+        ...primaryArtifact,
+        content_uri: storageUrl,
+        preview_uri: storageUrl,
+      };
     }
   }
+  return {
+    ...state,
+    pipelineResult,
+    primaryArtifact,
+    derivedPreferMedium,
+    tokensUsed,
+  };
+}
 
+async function runCritiqueAndEvaluation(
+  state: SessionExecutionState
+): Promise<SessionExecutionState> {
+  const artifact = state.primaryArtifact;
+  const result = state.pipelineResult;
+  if (!artifact || !result) return state;
   const critique = await runCritique(
     {
       artifact_id: artifact.artifact_id,
@@ -337,567 +526,705 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
     target_id: artifact.artifact_id,
     critique,
   });
+  return { ...state, critique, evaluation };
+}
 
-  if (supabase) {
-    const sessionWarnings: string[] = [];
-    let archiveEntryCreated = false;
-    /** true only when every attempted recurrence writeback (idea and/or thread) succeeded. */
-    let recurrenceUpdated = false;
-    let recurrenceAttempted = false;
-    let recurrenceAllSucceeded = true;
-    let proposalCreated = false;
-    let memoryRecordCreated = false;
-    let traceProposalId: string | null = null;
-    let traceProposalType: string | null = null;
-    const decisionSummary: {
-      project_reason: string | null;
-      thread_reason: string | null;
-      idea_reason: string | null;
-      rejected_alternatives: string[];
-      next_action: string | null;
-      confidence: number;
-    } = {
-      project_reason:
-        selectionSource === "archive"
-          ? "Return session: selected project from archive entries weighted by recurrence, pull, and recency."
-          : "Selected active project via project/thread selection (weighted by thread recurrence and creative pull).",
-      thread_reason:
-        selectionSource === "archive"
-          ? "Thread comes from chosen archive entry with unresolved or paused work."
-          : "Selected active thread for the project, weighted by recurrence_score and creative_pull.",
-      idea_reason: selectedIdeaId
-        ? "Selected idea linked to the chosen thread, biased toward higher recurrence and pull when available."
-        : "No specific idea was selected; session used project/thread and identity/context only.",
-      rejected_alternatives:
-        selectionSource === "archive"
-          ? ["Other archive entries had lower combined recurrence, pull, or were older."]
-          : ["Other active threads or ideas scored lower on recurrence and creative pull."],
-      next_action: null,
-      confidence: 0.7,
-    };
+/**
+ * Shared internal runner used by both manual POST /api/session/run and cron.
+ * Throws SessionRunError on handled failures so callers can map to HTTP.
+ */
+export async function runSessionInternal(options: SessionRunOptions): Promise<SessionRunSuccessPayload> {
+  const { createdBy, isCron, promptContext, preferMedium } = options;
+  const supabase = getSupabaseServer();
+  let state = initializeExecutionState(options, supabase);
+  state = await loadCreativeStateAndBacklog(state);
+  state = selectModeAndDrive(state);
+  state = await selectFocus(state);
+  state = await buildContexts(state);
+  state = await runGeneration(state);
+  if (!state.primaryArtifact || !state.pipelineResult) {
+    return finalizeResult(state);
+  }
+  state = await runCritiqueAndEvaluation(state);
+  if (state.supabase) {
+    state = await persistCoreOutputs(state);
+    state = await persistDerivedState(state);
+    state = await manageProposals(state);
+    state = await writeTraceAndDeliberation(state);
+  }
+  return finalizeResult(state);
+}
 
-    const sessionRow = {
-      session_id: result.session.session_id,
-      project_id: selectedProjectId ?? result.session.project_id,
-      mode: result.session.mode,
-      selected_drive: result.session.selected_drive,
-      title: result.session.title,
-      prompt_context: result.session.prompt_context,
-      reflection_notes: result.session.reflection_notes,
-      started_at: result.session.started_at,
-      ended_at: result.session.ended_at,
-      created_at: result.session.created_at,
-      updated_at: result.session.updated_at,
-    };
-    const { error: sessionError } = await supabase.from("creative_session").insert(sessionRow);
-    if (sessionError) {
-      throw new SessionRunError(500, { error: `Session insert failed: ${sessionError.message}` });
-    }
+function finalizeResult(state: SessionExecutionState): SessionRunSuccessPayload {
+  const result = state.pipelineResult;
+  const artifact = state.primaryArtifact;
+  const artifactCount = result ? (result.artifacts ?? []).length : 0;
+  const artifactMedium: PreferredMedium | "other" | null =
+    artifact && (artifact.medium === "image" || artifact.medium === "writing" || artifact.medium === "concept")
+      ? artifact.medium
+      : artifact?.medium
+        ? "other"
+        : null;
+  return {
+    session_id: result?.session.session_id ?? "",
+    artifact_count: artifactCount,
+    persisted: Boolean(state.supabase),
+    requested_medium: state.derivedPreferMedium ?? undefined,
+    artifact_medium: artifactMedium,
+    archive_entry_created: state.archiveEntryCreated,
+    recurrence_updated: state.recurrenceUpdated,
+    proposal_created: state.proposalCreated,
+    memory_record_created: state.memoryRecordCreated,
+    warnings: state.warnings,
+  };
+}
 
-    const artifactRole = inferArtifactRole(artifact.medium, options.isCron);
+async function persistCoreOutputs(state: SessionExecutionState): Promise<SessionExecutionState> {
+  const supabase = state.supabase;
+  const result = state.pipelineResult;
+  const artifact = state.primaryArtifact;
+  const critique = state.critique;
+  const evaluation = state.evaluation;
+  if (!supabase || !result || !artifact || !critique || !evaluation) return state;
 
-    const artifactRow = {
-      artifact_id: artifact.artifact_id,
-      project_id: selectedProjectId ?? artifact.project_id,
-      session_id: artifact.session_id,
-      primary_idea_id: selectedIdeaId ?? artifact.primary_idea_id,
-      primary_thread_id: selectedThreadId ?? artifact.primary_thread_id,
-      title: artifact.title,
-      summary: artifact.summary,
-      medium: artifact.medium,
-      lifecycle_status: artifact.lifecycle_status,
-      current_approval_state: artifact.current_approval_state,
-      current_publication_state: artifact.current_publication_state,
-      content_text: artifact.content_text,
-      content_uri: artifact.content_uri,
-      preview_uri: artifact.preview_uri,
-      notes: artifact.notes,
-      alignment_score: artifact.alignment_score,
-      emergence_score: artifact.emergence_score,
-      fertility_score: artifact.fertility_score,
-      pull_score: artifact.pull_score,
-      recurrence_score: artifact.recurrence_score,
-      artifact_role: artifactRole,
-      created_at: artifact.created_at,
-      updated_at: artifact.updated_at,
-    };
-    const { error: artifactError } = await supabase.from("artifact").insert(artifactRow);
-    if (artifactError) {
-      throw new SessionRunError(500, { error: `Artifact insert failed: ${artifactError.message}` });
-    }
+  const sessionRow = {
+    session_id: result.session.session_id,
+    project_id: state.selectedProjectId ?? result.session.project_id,
+    mode: result.session.mode,
+    selected_drive: result.session.selected_drive,
+    title: result.session.title,
+    prompt_context: result.session.prompt_context,
+    reflection_notes: result.session.reflection_notes,
+    started_at: result.session.started_at,
+    ended_at: result.session.ended_at,
+    created_at: result.session.created_at,
+    updated_at: result.session.updated_at,
+  };
+  const { error: sessionError } = await supabase.from("creative_session").insert(sessionRow);
+  if (sessionError) {
+    throw new SessionRunError(500, { error: `Session insert failed: ${sessionError.message}` });
+  }
 
-    const critiqueRow = {
-      critique_record_id: critique.critique_record_id,
-      artifact_id: critique.artifact_id,
-      session_id: critique.session_id,
-      intent_note: critique.intent_note,
-      strength_note: critique.strength_note,
-      originality_note: critique.originality_note,
-      energy_note: critique.energy_note,
-      potential_note: critique.potential_note,
-      medium_fit_note: critique.medium_fit_note,
-      coherence_note: critique.coherence_note,
-      fertility_note: critique.fertility_note,
-      overall_summary: critique.overall_summary,
-      critique_outcome: critique.critique_outcome,
-      created_at: critique.created_at,
-      updated_at: critique.updated_at,
-    };
-    const { error: critiqueError } = await supabase.from("critique_record").insert(critiqueRow);
-    if (critiqueError) {
-      throw new SessionRunError(500, { error: `Critique insert failed: ${critiqueError.message}` });
-    }
+  const artifactRole = inferArtifactRole(artifact.medium, state.isCron);
+  const artifactRow = {
+    artifact_id: artifact.artifact_id,
+    project_id: state.selectedProjectId ?? artifact.project_id,
+    session_id: artifact.session_id,
+    primary_idea_id: state.selectedIdeaId ?? artifact.primary_idea_id,
+    primary_thread_id: state.selectedThreadId ?? artifact.primary_thread_id,
+    title: artifact.title,
+    summary: artifact.summary,
+    medium: artifact.medium,
+    lifecycle_status: artifact.lifecycle_status,
+    current_approval_state: artifact.current_approval_state,
+    current_publication_state: artifact.current_publication_state,
+    content_text: artifact.content_text,
+    content_uri: artifact.content_uri,
+    preview_uri: artifact.preview_uri,
+    notes: artifact.notes,
+    alignment_score: artifact.alignment_score,
+    emergence_score: artifact.emergence_score,
+    fertility_score: artifact.fertility_score,
+    pull_score: artifact.pull_score,
+    recurrence_score: artifact.recurrence_score,
+    artifact_role: artifactRole,
+    created_at: artifact.created_at,
+    updated_at: artifact.updated_at,
+  };
+  const { error: artifactError } = await supabase.from("artifact").insert(artifactRow);
+  if (artifactError) {
+    throw new SessionRunError(500, { error: `Artifact insert failed: ${artifactError.message}` });
+  }
 
-    const repetitionDetected = await detectRepetition(supabase, critique.critique_outcome);
+  const critiqueRow = {
+    critique_record_id: critique.critique_record_id,
+    artifact_id: critique.artifact_id,
+    session_id: critique.session_id,
+    intent_note: critique.intent_note,
+    strength_note: critique.strength_note,
+    originality_note: critique.originality_note,
+    energy_note: critique.energy_note,
+    potential_note: critique.potential_note,
+    medium_fit_note: critique.medium_fit_note,
+    coherence_note: critique.coherence_note,
+    fertility_note: critique.fertility_note,
+    overall_summary: critique.overall_summary,
+    critique_outcome: critique.critique_outcome,
+    created_at: critique.created_at,
+    updated_at: critique.updated_at,
+  };
+  const { error: critiqueError } = await supabase.from("critique_record").insert(critiqueRow);
+  if (critiqueError) {
+    throw new SessionRunError(500, { error: `Critique insert failed: ${critiqueError.message}` });
+  }
 
-    const evaluationRow = {
-      evaluation_signal_id: evaluation.evaluation_signal_id,
-      target_type: evaluation.target_type,
-      target_id: evaluation.target_id,
+  const repetitionDetected = await detectRepetition(supabase, critique.critique_outcome);
+
+  const evaluationRow = {
+    evaluation_signal_id: evaluation.evaluation_signal_id,
+    target_type: evaluation.target_type,
+    target_id: evaluation.target_id,
+    alignment_score: evaluation.alignment_score,
+    emergence_score: evaluation.emergence_score,
+    fertility_score: evaluation.fertility_score,
+    pull_score: evaluation.pull_score,
+    recurrence_score: evaluation.recurrence_score,
+    resonance_score: evaluation.resonance_score,
+    rationale: evaluation.rationale,
+    created_at: evaluation.created_at,
+    updated_at: evaluation.updated_at,
+  };
+  const { error: evalError } = await supabase.from("evaluation_signal").insert(evaluationRow);
+  if (evalError) {
+    throw new SessionRunError(500, { error: `Evaluation insert failed: ${evalError.message}` });
+  }
+
+  const { error: artifactUpdateError } = await supabase
+    .from("artifact")
+    .update({
       alignment_score: evaluation.alignment_score,
       emergence_score: evaluation.emergence_score,
       fertility_score: evaluation.fertility_score,
       pull_score: evaluation.pull_score,
       recurrence_score: evaluation.recurrence_score,
-      resonance_score: evaluation.resonance_score,
-      rationale: evaluation.rationale,
-      created_at: evaluation.created_at,
-      updated_at: evaluation.updated_at,
-    };
-    const { error: evalError } = await supabase.from("evaluation_signal").insert(evaluationRow);
-    if (evalError) {
-      throw new SessionRunError(500, { error: `Evaluation insert failed: ${evalError.message}` });
-    }
-
-    const { error: artifactUpdateError } = await supabase
-      .from("artifact")
-      .update({
-        alignment_score: evaluation.alignment_score,
-        emergence_score: evaluation.emergence_score,
-        fertility_score: evaluation.fertility_score,
-        pull_score: evaluation.pull_score,
-        recurrence_score: evaluation.recurrence_score,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("artifact_id", artifact.artifact_id);
-    if (artifactUpdateError) {
-      throw new SessionRunError(500, { error: `Artifact update failed: ${artifactUpdateError.message}` });
-    }
-
-    // A-3: Archive loop — when critique marks this artifact as an archive candidate, create an archive_entry
-    // so future return-mode sessions can select from autonomously generated archive history.
-    if (critique.critique_outcome === "archive_candidate") {
-      const archiveEntry = createArchiveEntry({
-        project_id: selectedProjectId ?? artifact.project_id,
-        artifact_id: artifact.artifact_id,
-        idea_id: selectedIdeaId ?? artifact.primary_idea_id,
-        idea_thread_id: selectedThreadId ?? artifact.primary_thread_id,
-        reason_paused: critique.overall_summary?.slice(0, 500) ?? "archive_candidate",
-        creative_pull: evaluation.pull_score,
-        recurrence_score: evaluation.recurrence_score,
-        last_session_id: result.session.session_id,
-      });
-      const { error: archiveError } = await supabase.from("archive_entry").insert(archiveEntry);
-      if (archiveError) {
-        const msg = `archive_entry insert failed: ${archiveError.message}`;
-        console.warn("[session]", msg, { artifact_id: artifact.artifact_id });
-        sessionWarnings.push(msg);
-      } else {
-        archiveEntryCreated = true;
-      }
-    }
-
-    // Concept-to-proposal: if concept artifact is eligible, create or refresh a habitat layout proposal
-    // only when backlog is under cap (agent focuses on publishing or other lanes when backlog is full).
-    if (artifact.medium === "concept") {
-      const eligibility = isProposalEligible({
-        medium: artifact.medium,
-        alignment_score: evaluation.alignment_score,
-        fertility_score: evaluation.fertility_score,
-        pull_score: evaluation.pull_score,
-        critique_outcome: critique.critique_outcome,
-      });
-      if (eligibility.eligible) {
-        const cap = getMaxPendingHabitatLayoutProposals();
-        const { data: existingActive } = await supabase
-          .from("proposal_record")
-          .select("proposal_record_id, created_at")
-          .eq("lane_type", "surface")
-          .eq("proposal_role", "habitat_layout")
-          .eq("target_surface", "staging_habitat")
-          .in("proposal_state", ["pending_review", "approved_for_staging", "staged"]);
-
-        const count = Array.isArray(existingActive) ? existingActive.length : 0;
-        if (cap > 0 && count >= cap) {
-          console.log("[session] skipping habitat_layout proposal: backlog at cap", {
-            count,
-            cap,
-            role: "habitat_layout",
-          });
-          if (!decisionSummary.next_action) {
-            decisionSummary.next_action =
-              "Focus on reviewing existing habitat layout proposals before creating new ones (backlog at cap).";
-          }
-        } else {
-          const minimalPayload = buildMinimalHabitatPayloadFromConcept(artifact.title, artifact.summary);
-          const validated = validateHabitatPayload(minimalPayload);
-          const hasPayload = validated.success;
-          const summary = hasPayload ? summaryFromHabitatPayload(validated.data) : (artifact.summary?.slice(0, 2000) ?? null);
-
-          if (Array.isArray(existingActive) && existingActive.length > 0) {
-            const sorted = [...existingActive].sort(
-              (a, b) => new Date(b.created_at as string).getTime() - new Date(a.created_at as string).getTime()
-            );
-            const newest = sorted[0];
-            const older = sorted.slice(1);
-            if (newest) {
-              traceProposalId = newest.proposal_record_id as string;
-              traceProposalType = "surface";
-              const { error: updateProposalError } = await supabase
-                .from("proposal_record")
-                .update({
-                  title: artifact.title,
-                  summary,
-                  habitat_payload_json: hasPayload ? (validated.data as object) : null,
-                  updated_at: new Date().toISOString(),
-                })
-                .eq("proposal_record_id", newest.proposal_record_id);
-              if (updateProposalError) {
-                const msg = `habitat_layout proposal update failed: ${updateProposalError.message}`;
-                console.warn("[session]", msg, { proposal_record_id: newest.proposal_record_id });
-                sessionWarnings.push(msg);
-              } else {
-                proposalCreated = true;
-              }
-
-              if (older.length > 0) {
-                const { error: archiveOlderError } = await supabase
-                  .from("proposal_record")
-                  .update({
-                    proposal_state: "archived",
-                    updated_at: new Date().toISOString(),
-                  })
-                  .in(
-                    "proposal_record_id",
-                    older.map((o) => o.proposal_record_id)
-                  );
-                if (archiveOlderError) {
-                  console.warn("[session] archiving older habitat_layout proposals failed", {
-                    error: archiveOlderError.message,
-                    count: older.length,
-                  });
-                }
-              }
-            }
-          } else {
-            const proposalRow = {
-              lane_type: "surface",
-              target_type: "concept",
-              target_id: artifact.artifact_id,
-              artifact_id: artifact.artifact_id,
-              title: artifact.title,
-              summary,
-              proposal_state: "pending_review",
-              target_surface: "staging_habitat",
-              proposal_type: "layout",
-              proposal_role: "habitat_layout",
-              habitat_payload_json: hasPayload ? (validated.data as object) : null,
-              preview_uri: null,
-              review_note: null,
-              created_by: createdBy,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            };
-            const { data: insertedHabitat, error: insertHabitatError } = await supabase
-              .from("proposal_record")
-              .insert(proposalRow)
-              .select("proposal_record_id")
-              .single();
-            if (insertHabitatError) {
-              const msg = `habitat_layout proposal insert failed: ${insertHabitatError.message}`;
-              console.warn("[session]", msg, { artifact_id: artifact.artifact_id });
-              sessionWarnings.push(msg);
-            } else if (insertedHabitat?.proposal_record_id) {
-              traceProposalId = insertedHabitat.proposal_record_id as string;
-              traceProposalType = "surface";
-              proposalCreated = true;
-              decisionSummary.next_action =
-                decisionSummary.next_action ??
-                "Create or refine a habitat layout proposal for the staging habitat from this concept.";
-            }
-          }
-        }
-      }
-    }
-
-    // Avatar proposal: when image artifact is produced, create an avatar_candidate proposal only if under cap.
-    if (artifact.medium === "image") {
-      const { data: existingAvatar } = await supabase
-        .from("proposal_record")
-        .select("proposal_record_id")
-        .eq("target_type", "avatar_candidate")
-        .eq("artifact_id", artifact.artifact_id)
-        .limit(1)
-        .maybeSingle();
-      if (existingAvatar) {
-        // Already proposed this artifact.
-      } else {
-        const avatarCap = getMaxPendingAvatarProposals();
-        const { count: pendingAvatarCount } = await supabase
-          .from("proposal_record")
-          .select("proposal_record_id", { count: "exact", head: true })
-          .eq("target_type", "avatar_candidate")
-          .eq("proposal_state", "pending_review");
-        const pending = pendingAvatarCount ?? 0;
-        if (avatarCap > 0 && pending >= avatarCap) {
-          console.log("[session] skipping avatar_candidate proposal: backlog at cap", {
-            pending,
-            cap: avatarCap,
-            role: "avatar_candidate",
-          });
-        } else {
-          const avatarSummary = capSummaryTo200Words(artifact.summary ?? artifact.title ?? "Proposed as public avatar.");
-          const { data: insertedAvatar, error: insertAvatarError } = await supabase
-            .from("proposal_record")
-            .insert({
-              lane_type: "surface",
-              target_type: "avatar_candidate",
-              target_id: artifact.artifact_id,
-              artifact_id: artifact.artifact_id,
-              title: artifact.title ?? "Avatar candidate",
-              summary: avatarSummary || null,
-              proposal_state: "pending_review",
-              target_surface: null,
-              proposal_type: "avatar",
-              preview_uri: artifact.preview_uri ?? null,
-              review_note: null,
-              created_by: createdBy,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            })
-            .select("proposal_record_id")
-            .single();
-          if (insertAvatarError) {
-            const msg = `avatar_candidate proposal insert failed: ${insertAvatarError.message}`;
-            console.warn("[session]", msg, { artifact_id: artifact.artifact_id });
-            sessionWarnings.push(msg);
-          } else if (insertedAvatar?.proposal_record_id) {
-            traceProposalId = insertedAvatar.proposal_record_id as string;
-            traceProposalType = "avatar";
-            proposalCreated = true;
-            decisionSummary.next_action =
-              decisionSummary.next_action ?? "Propose a new avatar candidate for review based on this image.";
-          }
-        }
-      }
-    }
-
-    const generationRunRow = {
-      session_id: result.session.session_id,
-      artifact_id: artifact.artifact_id,
-      medium: artifact.medium,
-      provider_name: "openai",
-      model_name:
-        artifact.medium === "image"
-          ? (process.env.OPENAI_MODEL_IMAGE ?? "dall-e-3")
-          : artifact.medium === "concept"
-            ? (process.env.OPENAI_MODEL_CONCEPT ??
-              process.env.OPENAI_MODEL_GENERATION ??
-              process.env.OPENAI_MODEL ??
-              "gpt-4o-mini")
-            : (process.env.OPENAI_MODEL_GENERATION ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini"),
-      prompt_snapshot: null,
-      context_snapshot: null,
-      run_status: "completed",
-      started_at: result.session.started_at,
-      ended_at: result.session.ended_at,
-      created_at: result.session.updated_at,
-      updated_at: result.session.updated_at,
-    };
-    const { error: genError } = await supabase.from("generation_run").insert(generationRunRow);
-    if (genError) {
-      throw new SessionRunError(500, { error: `Generation run insert failed: ${genError.message}` });
-    }
-
-    // A-6: Derive creative-state signals from session context.
-    // exploredNewMedium: true when this artifact's medium was absent from the last 5 prior artifacts.
-    // addedUnfinishedWork: true when critique marks the artifact as an archive candidate.
-    // isReflection: true when the session mode was "reflect".
-    // Medium history is queried globally (not per-project) because expression_diversity
-    // is a system-level creative-state field for a single-identity Twin, not per-project.
-    const { data: recentArtifactRows } = await supabase
-      .from("artifact")
-      .select("medium")
-      .neq("artifact_id", artifact.artifact_id)
-      .order("created_at", { ascending: false })
-      .limit(5);
-    const recentMediums = (recentArtifactRows ?? [])
-      .map((a: { medium: string | null }) => a.medium)
-      .filter(Boolean) as string[];
-    const sessionSignals: CreativeStateSignals = {
-      isReflection: mode === "reflect",
-      exploredNewMedium:
-        !!artifact.medium && recentMediums.length > 0 && !recentMediums.includes(artifact.medium),
-      addedUnfinishedWork: critique.critique_outcome === "archive_candidate",
-    };
-
-    const nextState = updateCreativeState(previousState, evaluation, { repetitionDetected, ...sessionSignals });
-    const stateSnapshotRow = stateToSnapshotRow(
-      nextState,
-      result.session.session_id,
-      critique.overall_summary?.slice(0, 500) ?? null
-    );
-    const { error: stateError } = await supabase.from("creative_state_snapshot").insert(stateSnapshotRow);
-    if (stateError) {
-      throw new SessionRunError(500, { error: `State snapshot insert failed: ${stateError.message}` });
-    }
-
-    const memorySummary = [
-      artifact.title,
-      artifact.summary?.slice(0, 200),
-      critique.overall_summary?.slice(0, 300),
-    ]
-      .filter(Boolean)
-      .join(" | ");
-    const memoryRow = {
-      memory_record_id: crypto.randomUUID(),
-      project_id: result.session.project_id,
-      memory_type: "session_reflection",
-      summary: memorySummary.slice(0, 2000) || "Session completed.",
-      details: critique.overall_summary ?? null,
-      source_session_id: result.session.session_id,
-      source_artifact_id: artifact.artifact_id,
-      importance_score: evaluation.pull_score,
-      recurrence_score: evaluation.recurrence_score,
-      created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-    };
-    const { error: memError } = await supabase.from("memory_record").insert(memoryRow);
-    if (memError) {
-      throw new SessionRunError(500, { error: `Memory record insert failed: ${memError.message}` });
-    }
-    memoryRecordCreated = true;
-
-    // A-2: Recurrence writeback — propagate evaluation.recurrence_score to the selected idea and thread.
-    // Only writes when recurrence_score is non-null to avoid clearing an existing score from a prior session.
-    // Uses direct overwrite (smaller scope than EWA for this PR). Failures are soft-logged and do not abort the session.
-    if (selectedIdeaId && evaluation.recurrence_score !== null) {
-      const { error: ideaRecurrenceError } = await supabase
-        .from("idea")
-        .update({ recurrence_score: evaluation.recurrence_score, updated_at: new Date().toISOString() })
-        .eq("idea_id", selectedIdeaId);
-      recurrenceAttempted = true;
-      if (ideaRecurrenceError) {
-        const msg = `recurrence writeback failed for idea ${selectedIdeaId}: ${ideaRecurrenceError.message}`;
-        console.warn("[session]", msg);
-        sessionWarnings.push(msg);
-        recurrenceAllSucceeded = false;
-      }
-    }
-    if (selectedThreadId && evaluation.recurrence_score !== null) {
-      const { error: threadRecurrenceError } = await supabase
-        .from("idea_thread")
-        .update({ recurrence_score: evaluation.recurrence_score, updated_at: new Date().toISOString() })
-        .eq("idea_thread_id", selectedThreadId);
-      recurrenceAttempted = true;
-      if (threadRecurrenceError) {
-        const msg = `recurrence writeback failed for idea_thread ${selectedThreadId}: ${threadRecurrenceError.message}`;
-        console.warn("[session]", msg);
-        sessionWarnings.push(msg);
-        recurrenceAllSucceeded = false;
-      }
-    }
-    recurrenceUpdated = recurrenceAttempted && recurrenceAllSucceeded;
-
-    const tokensUsedForRecord = "tokensUsed" in result && typeof result.tokensUsed === "number" ? result.tokensUsed : 0;
-    if (tokensUsedForRecord > 0) await addTokenUsage(supabase, tokensUsedForRecord);
-
-    if (!decisionSummary.next_action) {
-      if (mode === "return") {
-        decisionSummary.next_action =
-          "Continue exploring or resolving this archived thread or idea in a follow-up session.";
-      } else if (artifact.medium === "concept") {
-        decisionSummary.next_action =
-          "Review this concept and decide whether to adjust or create proposals for staging or publication.";
-      } else if (artifact.medium === "image") {
-        decisionSummary.next_action =
-          "Review this image for potential avatar or surface use, or archive it if it does not fit current direction.";
-      } else {
-        decisionSummary.next_action =
-          "Review this artifact for approval, archiving, or follow-up work depending on evaluation and critique.";
-      }
-    }
-
-    // Session trace: full decision chain for runtime introspection.
-    const runtimeConfig = await getRuntimeConfig(supabase);
-    const traceLabels = await getProjectThreadIdeaTraceLabels(
-      supabase,
-      selectedProjectId,
-      selectedThreadId,
-      selectedIdeaId
-    );
-    const trace = {
-      mode: runtimeConfig.mode,
-      drive: selectedDrive ?? null,
-      project_id: selectedProjectId ?? null,
-      project_name: traceLabels.project_name ?? null,
-      idea_thread_id: selectedThreadId ?? null,
-      thread_name: traceLabels.thread_name ?? null,
-      idea_id: selectedIdeaId ?? null,
-      idea_summary: traceLabels.idea_summary ?? null,
-      artifact_id: artifact.artifact_id,
-      proposal_id: traceProposalId,
-      proposal_type: traceProposalType,
-      tokens_used: tokensUsed ?? null,
-      generation_model: generationRunRow.model_name,
-      start_time: result.session.started_at,
-      end_time: result.session.ended_at ?? new Date().toISOString(),
-    };
-    const { error: traceUpdateError } = await supabase
-      .from("creative_session")
-      .update({ trace, decision_summary: decisionSummary, updated_at: new Date().toISOString() })
-      .eq("session_id", result.session.session_id);
-    if (traceUpdateError) {
-      const msg = `session trace update failed: ${traceUpdateError.message}`;
-      console.warn("[session]", msg, { session_id: result.session.session_id });
-      sessionWarnings.push(msg);
-    }
-
-    const artifactMedium: PreferredMedium | "other" | null =
-      artifact.medium === "image" || artifact.medium === "writing" || artifact.medium === "concept"
-        ? artifact.medium
-        : artifact.medium
-          ? "other"
-          : null;
-
-    return {
-      session_id: result.session.session_id,
-      artifact_count: (result.artifacts ?? []).length,
-      persisted: true,
-      requested_medium: derivedPreferMedium ?? undefined,
-      artifact_medium: artifactMedium,
-      archive_entry_created: archiveEntryCreated,
-      recurrence_updated: recurrenceUpdated,
-      proposal_created: proposalCreated,
-      memory_record_created: memoryRecordCreated,
-      warnings: sessionWarnings,
-    };
+    })
+    .eq("artifact_id", artifact.artifact_id);
+  if (artifactUpdateError) {
+    throw new SessionRunError(500, { error: `Artifact update failed: ${artifactUpdateError.message}` });
   }
 
-  const artifactMedium: PreferredMedium | "other" | null =
-    artifact.medium === "image" || artifact.medium === "writing" || artifact.medium === "concept"
-      ? artifact.medium
-      : artifact.medium
-        ? "other"
-        : null;
+  const generationRunRow = {
+    session_id: result.session.session_id,
+    artifact_id: artifact.artifact_id,
+    medium: artifact.medium,
+    provider_name: "openai",
+    model_name:
+      artifact.medium === "image"
+        ? (process.env.OPENAI_MODEL_IMAGE ?? "dall-e-3")
+        : artifact.medium === "concept"
+          ? (process.env.OPENAI_MODEL_CONCEPT ??
+            process.env.OPENAI_MODEL_GENERATION ??
+            process.env.OPENAI_MODEL ??
+            "gpt-4o-mini")
+          : (process.env.OPENAI_MODEL_GENERATION ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini"),
+    prompt_snapshot: null,
+    context_snapshot: null,
+    run_status: "completed",
+    started_at: result.session.started_at,
+    ended_at: result.session.ended_at,
+    created_at: result.session.updated_at,
+    updated_at: result.session.updated_at,
+  };
+  const { error: genError } = await supabase.from("generation_run").insert(generationRunRow);
+  if (genError) {
+    throw new SessionRunError(500, { error: `Generation run insert failed: ${genError.message}` });
+  }
+
+  return { ...state, repetitionDetected };
+}
+
+async function persistDerivedState(state: SessionExecutionState): Promise<SessionExecutionState> {
+  const supabase = state.supabase;
+  const result = state.pipelineResult;
+  const artifact = state.primaryArtifact;
+  const critique = state.critique;
+  const evaluation = state.evaluation;
+  if (!supabase || !result || !artifact || !critique || !evaluation) return state;
+
+  let {
+    archiveEntryCreated,
+    recurrenceUpdated,
+    recurrenceAttempted,
+    recurrenceAllSucceeded,
+    memoryRecordCreated,
+    decisionSummary,
+    warnings,
+  } = state;
+
+  if (critique.critique_outcome === "archive_candidate") {
+    const archiveEntry = createArchiveEntry({
+      project_id: state.selectedProjectId ?? artifact.project_id,
+      artifact_id: artifact.artifact_id,
+      idea_id: state.selectedIdeaId ?? artifact.primary_idea_id,
+      idea_thread_id: state.selectedThreadId ?? artifact.primary_thread_id,
+      reason_paused: critique.overall_summary?.slice(0, 500) ?? "archive_candidate",
+      creative_pull: evaluation.pull_score,
+      recurrence_score: evaluation.recurrence_score,
+      last_session_id: result.session.session_id,
+    });
+    const { error: archiveError } = await supabase.from("archive_entry").insert(archiveEntry);
+    if (archiveError) {
+      const msg = `archive_entry insert failed: ${archiveError.message}`;
+      console.warn("[session]", msg, { artifact_id: artifact.artifact_id });
+      warnings = [...warnings, msg];
+    } else {
+      archiveEntryCreated = true;
+    }
+  }
+
+  const { data: recentArtifactRows } = await supabase
+    .from("artifact")
+    .select("medium")
+    .neq("artifact_id", artifact.artifact_id)
+    .order("created_at", { ascending: false })
+    .limit(5);
+  const recentMediums = (recentArtifactRows ?? [])
+    .map((a: { medium: string | null }) => a.medium)
+    .filter(Boolean) as string[];
+  const sessionSignals: CreativeStateSignals = {
+    isReflection: state.sessionMode === "reflect",
+    exploredNewMedium:
+      !!artifact.medium && recentMediums.length > 0 && !recentMediums.includes(artifact.medium),
+    addedUnfinishedWork: critique.critique_outcome === "archive_candidate",
+  };
+  const nextState = updateCreativeState(state.previousState, evaluation, {
+    repetitionDetected: state.repetitionDetected,
+    ...sessionSignals,
+  });
+  const stateSnapshotRow = stateToSnapshotRow(
+    nextState,
+    result.session.session_id,
+    critique.overall_summary?.slice(0, 500) ?? null
+  );
+  const { error: stateError } = await supabase.from("creative_state_snapshot").insert(stateSnapshotRow);
+  if (stateError) {
+    throw new SessionRunError(500, { error: `State snapshot insert failed: ${stateError.message}` });
+  }
+
+  const memorySummary = [
+    artifact.title,
+    artifact.summary?.slice(0, 200),
+    critique.overall_summary?.slice(0, 300),
+  ]
+    .filter(Boolean)
+    .join(" | ");
+  const memoryRow = {
+    memory_record_id: crypto.randomUUID(),
+    project_id: result.session.project_id,
+    memory_type: "session_reflection",
+    summary: memorySummary.slice(0, 2000) || "Session completed.",
+    details: critique.overall_summary ?? null,
+    source_session_id: result.session.session_id,
+    source_artifact_id: artifact.artifact_id,
+    importance_score: evaluation.pull_score,
+    recurrence_score: evaluation.recurrence_score,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  const { error: memError } = await supabase.from("memory_record").insert(memoryRow);
+  if (memError) {
+    throw new SessionRunError(500, { error: `Memory record insert failed: ${memError.message}` });
+  }
+  memoryRecordCreated = true;
+
+  if (state.selectedIdeaId && evaluation.recurrence_score !== null) {
+    const { error: ideaRecurrenceError } = await supabase
+      .from("idea")
+      .update({ recurrence_score: evaluation.recurrence_score, updated_at: new Date().toISOString() })
+      .eq("idea_id", state.selectedIdeaId);
+    recurrenceAttempted = true;
+    if (ideaRecurrenceError) {
+      const msg = `recurrence writeback failed for idea ${state.selectedIdeaId}: ${ideaRecurrenceError.message}`;
+      console.warn("[session]", msg);
+      warnings = [...warnings, msg];
+      recurrenceAllSucceeded = false;
+    }
+  }
+  if (state.selectedThreadId && evaluation.recurrence_score !== null) {
+    const { error: threadRecurrenceError } = await supabase
+      .from("idea_thread")
+      .update({ recurrence_score: evaluation.recurrence_score, updated_at: new Date().toISOString() })
+      .eq("idea_thread_id", state.selectedThreadId);
+    recurrenceAttempted = true;
+    if (threadRecurrenceError) {
+      const msg = `recurrence writeback failed for idea_thread ${state.selectedThreadId}: ${threadRecurrenceError.message}`;
+      console.warn("[session]", msg);
+      warnings = [...warnings, msg];
+      recurrenceAllSucceeded = false;
+    }
+  }
+  recurrenceUpdated = recurrenceAttempted && recurrenceAllSucceeded;
+
+  const tokensUsedForRecord =
+    "tokensUsed" in result && typeof result.tokensUsed === "number" ? result.tokensUsed : 0;
+  if (tokensUsedForRecord > 0) await addTokenUsage(supabase, tokensUsedForRecord);
+
+  if (!decisionSummary.next_action) {
+    if (state.sessionMode === "return") {
+      decisionSummary = {
+        ...decisionSummary,
+        next_action:
+          "Continue exploring or resolving this archived thread or idea in a follow-up session.",
+      };
+    } else if (artifact.medium === "concept") {
+      decisionSummary = {
+        ...decisionSummary,
+        next_action:
+          "Review this concept and decide whether to adjust or create proposals for staging or publication.",
+      };
+    } else if (artifact.medium === "image") {
+      decisionSummary = {
+        ...decisionSummary,
+        next_action:
+          "Review this image for potential avatar or surface use, or archive it if it does not fit current direction.",
+      };
+    } else {
+      decisionSummary = {
+        ...decisionSummary,
+        next_action:
+          "Review this artifact for approval, archiving, or follow-up work depending on evaluation and critique.",
+      };
+    }
+  }
 
   return {
-    session_id: result.session.session_id,
-    artifact_count: (result.artifacts ?? []).length,
-    persisted: Boolean(supabase),
-    requested_medium: derivedPreferMedium ?? undefined,
-    artifact_medium: artifactMedium,
-    warnings: [],
+    ...state,
+    archiveEntryCreated,
+    recurrenceUpdated,
+    recurrenceAttempted,
+    recurrenceAllSucceeded,
+    memoryRecordCreated,
+    decisionSummary,
+    warnings,
   };
+}
+
+async function manageProposals(state: SessionExecutionState): Promise<SessionExecutionState> {
+  const supabase = state.supabase;
+  const artifact = state.primaryArtifact;
+  const evaluation = state.evaluation;
+  const critique = state.critique;
+  if (!supabase || !artifact || !evaluation || !critique) return state;
+
+  let { proposalCreated, traceProposalId, traceProposalType, decisionSummary, warnings } = state;
+
+  if (artifact.medium === "concept") {
+    const eligibility = isProposalEligible({
+      medium: artifact.medium,
+      alignment_score: evaluation.alignment_score,
+      fertility_score: evaluation.fertility_score,
+      pull_score: evaluation.pull_score,
+      critique_outcome: critique.critique_outcome,
+    });
+    if (eligibility.eligible) {
+      const cap = getMaxPendingHabitatLayoutProposals();
+      const { data: existingActive } = await supabase
+        .from("proposal_record")
+        .select("proposal_record_id, created_at")
+        .eq("lane_type", "surface")
+        .eq("proposal_role", "habitat_layout")
+        .eq("target_surface", "staging_habitat")
+        .in("proposal_state", ["pending_review", "approved_for_staging", "staged"]);
+
+      const count = Array.isArray(existingActive) ? existingActive.length : 0;
+      if (cap > 0 && count >= cap) {
+        console.log("[session] skipping habitat_layout proposal: backlog at cap", {
+          count,
+          cap,
+          role: "habitat_layout",
+        });
+        if (!decisionSummary.next_action) {
+          decisionSummary = {
+            ...decisionSummary,
+            next_action:
+              "Focus on reviewing existing habitat layout proposals before creating new ones (backlog at cap).",
+          };
+        }
+      } else {
+        const minimalPayload = buildMinimalHabitatPayloadFromConcept(artifact.title, artifact.summary);
+        const validated = validateHabitatPayload(minimalPayload);
+        const hasPayload = validated.success;
+        const summary = hasPayload
+          ? summaryFromHabitatPayload(validated.data)
+          : (artifact.summary?.slice(0, 2000) ?? null);
+
+        if (Array.isArray(existingActive) && existingActive.length > 0) {
+          const sorted = [...existingActive].sort(
+            (a, b) =>
+              new Date(b.created_at as string).getTime() - new Date(a.created_at as string).getTime()
+          );
+          const newest = sorted[0];
+          const older = sorted.slice(1);
+          if (newest) {
+            traceProposalId = newest.proposal_record_id as string;
+            traceProposalType = "surface";
+            const { error: updateProposalError } = await supabase
+              .from("proposal_record")
+              .update({
+                title: artifact.title,
+                summary,
+                habitat_payload_json: hasPayload ? (validated.data as object) : null,
+                updated_at: new Date().toISOString(),
+              })
+              .eq("proposal_record_id", newest.proposal_record_id);
+            if (updateProposalError) {
+              const msg = `habitat_layout proposal update failed: ${updateProposalError.message}`;
+              console.warn("[session]", msg, { proposal_record_id: newest.proposal_record_id });
+              warnings = [...warnings, msg];
+            } else {
+              proposalCreated = true;
+            }
+
+            if (older.length > 0) {
+              const { error: archiveOlderError } = await supabase
+                .from("proposal_record")
+                .update({
+                  proposal_state: "archived",
+                  updated_at: new Date().toISOString(),
+                })
+                .in(
+                  "proposal_record_id",
+                  older.map((o) => o.proposal_record_id)
+                );
+              if (archiveOlderError) {
+                console.warn("[session] archiving older habitat_layout proposals failed", {
+                  error: archiveOlderError.message,
+                  count: older.length,
+                });
+              }
+            }
+          }
+        } else {
+          const proposalRow = {
+            lane_type: "surface" as const,
+            target_type: "concept",
+            target_id: artifact.artifact_id,
+            artifact_id: artifact.artifact_id,
+            title: artifact.title,
+            summary,
+            proposal_state: "pending_review",
+            target_surface: "staging_habitat",
+            proposal_type: "layout",
+            proposal_role: "habitat_layout",
+            habitat_payload_json: hasPayload ? (validated.data as object) : null,
+            preview_uri: null,
+            review_note: null,
+            created_by: state.createdBy,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+          const { data: insertedHabitat, error: insertHabitatError } = await supabase
+            .from("proposal_record")
+            .insert(proposalRow)
+            .select("proposal_record_id")
+            .single();
+          if (insertHabitatError) {
+            const msg = `habitat_layout proposal insert failed: ${insertHabitatError.message}`;
+            console.warn("[session]", msg, { artifact_id: artifact.artifact_id });
+            warnings = [...warnings, msg];
+          } else if (insertedHabitat?.proposal_record_id) {
+            traceProposalId = insertedHabitat.proposal_record_id as string;
+            traceProposalType = "surface";
+            proposalCreated = true;
+            decisionSummary = {
+              ...decisionSummary,
+              next_action:
+                decisionSummary.next_action ??
+                "Create or refine a habitat layout proposal for the staging habitat from this concept.",
+            };
+          }
+        }
+      }
+    }
+  }
+
+  if (artifact.medium === "image") {
+    const { data: existingAvatar } = await supabase
+      .from("proposal_record")
+      .select("proposal_record_id")
+      .eq("target_type", "avatar_candidate")
+      .eq("artifact_id", artifact.artifact_id)
+      .limit(1)
+      .maybeSingle();
+    if (!existingAvatar) {
+      const avatarCap = getMaxPendingAvatarProposals();
+      const { count: pendingAvatarCount } = await supabase
+        .from("proposal_record")
+        .select("proposal_record_id", { count: "exact", head: true })
+        .eq("target_type", "avatar_candidate")
+        .eq("proposal_state", "pending_review");
+      const pending = pendingAvatarCount ?? 0;
+      if (avatarCap > 0 && pending >= avatarCap) {
+        console.log("[session] skipping avatar_candidate proposal: backlog at cap", {
+          pending,
+          cap: avatarCap,
+          role: "avatar_candidate",
+        });
+      } else {
+        const avatarSummary = capSummaryTo200Words(
+          artifact.summary ?? artifact.title ?? "Proposed as public avatar."
+        );
+        const { data: insertedAvatar, error: insertAvatarError } = await supabase
+          .from("proposal_record")
+          .insert({
+            lane_type: "surface",
+            target_type: "avatar_candidate",
+            target_id: artifact.artifact_id,
+            artifact_id: artifact.artifact_id,
+            title: artifact.title ?? "Avatar candidate",
+            summary: avatarSummary || null,
+            proposal_state: "pending_review",
+            target_surface: null,
+            proposal_type: "avatar",
+            preview_uri: artifact.preview_uri ?? null,
+            review_note: null,
+            created_by: state.createdBy,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .select("proposal_record_id")
+          .single();
+        if (insertAvatarError) {
+          const msg = `avatar_candidate proposal insert failed: ${insertAvatarError.message}`;
+          console.warn("[session]", msg, { artifact_id: artifact.artifact_id });
+          warnings = [...warnings, msg];
+        } else if (insertedAvatar?.proposal_record_id) {
+          traceProposalId = insertedAvatar.proposal_record_id as string;
+          traceProposalType = "avatar";
+          proposalCreated = true;
+          decisionSummary = {
+            ...decisionSummary,
+            next_action:
+              decisionSummary.next_action ??
+              "Propose a new avatar candidate for review based on this image.",
+          };
+        }
+      }
+    }
+  }
+
+  return {
+    ...state,
+    proposalCreated,
+    traceProposalId,
+    traceProposalType,
+    decisionSummary,
+    warnings,
+  };
+}
+
+async function writeTraceAndDeliberation(
+  state: SessionExecutionState
+): Promise<SessionExecutionState> {
+  const supabase = state.supabase;
+  const result = state.pipelineResult;
+  const artifact = state.primaryArtifact;
+  const critique = state.critique;
+  if (!supabase || !result || !artifact || !critique) return state;
+
+  const runtimeConfig = await getRuntimeConfig(supabase);
+  const metabolismMode = runtimeConfig.mode;
+  const traceLabels = await getProjectThreadIdeaTraceLabels(
+    supabase,
+    state.selectedProjectId,
+    state.selectedThreadId,
+    state.selectedIdeaId
+  );
+  const generationRunRow = {
+    model_name:
+      artifact.medium === "image"
+        ? (process.env.OPENAI_MODEL_IMAGE ?? "dall-e-3")
+        : artifact.medium === "concept"
+          ? (process.env.OPENAI_MODEL_CONCEPT ??
+            process.env.OPENAI_MODEL_GENERATION ??
+            process.env.OPENAI_MODEL ??
+            "gpt-4o-mini")
+          : (process.env.OPENAI_MODEL_GENERATION ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini"),
+  };
+  const trace = {
+    mode: metabolismMode,
+    drive: state.selectedDrive ?? null,
+    project_id: state.selectedProjectId ?? null,
+    project_name: traceLabels.project_name ?? null,
+    idea_thread_id: state.selectedThreadId ?? null,
+    thread_name: traceLabels.thread_name ?? null,
+    idea_id: state.selectedIdeaId ?? null,
+    idea_summary: traceLabels.idea_summary ?? null,
+    artifact_id: artifact.artifact_id,
+    proposal_id: state.traceProposalId,
+    proposal_type: state.traceProposalType,
+    tokens_used: state.tokensUsed ?? null,
+    generation_model: generationRunRow.model_name,
+    start_time: result.session.started_at,
+    end_time: result.session.ended_at ?? new Date().toISOString(),
+  };
+  const { error: traceUpdateError } = await supabase
+    .from("creative_session")
+    .update({
+      trace,
+      decision_summary: state.decisionSummary,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("session_id", result.session.session_id);
+  if (traceUpdateError) {
+    const msg = `session trace update failed: ${traceUpdateError.message}`;
+    console.warn("[session]", msg, { session_id: result.session.session_id });
+    state = { ...state, warnings: [...state.warnings, msg] };
+  }
+
+  const outcomeSummary = [
+    artifact.title,
+    artifact.summary?.slice(0, 200),
+    critique.overall_summary?.slice(0, 300),
+  ]
+    .filter(Boolean)
+    .join(" | ")
+    .slice(0, 2000) || "Session completed.";
+
+  const selectionReason =
+    state.selectionSource === "archive"
+      ? "archive_return_due_to_mode"
+      : state.selectionSource === "project_thread"
+        ? "project_thread_default"
+        : "explicit_preference";
+
+  try {
+    await writeDeliberationTrace({
+      supabase,
+      session_id: result.session.session_id,
+      observations_json: {
+        session_mode: state.sessionMode,
+        selected_drive: state.selectedDrive,
+        selection_source: state.selectionSource,
+        metabolism_mode: metabolismMode,
+      },
+      state_summary: `mode=${state.sessionMode}, drive=${state.selectedDrive ?? "none"}, public_curation_backlog=${state.liveBacklog}`,
+      tensions_json: {
+        archive_candidates: state.archiveCandidateAvailable,
+        public_curation_backlog: state.liveBacklog,
+      },
+      hypotheses_json: {
+        selection_reason: selectionReason,
+        next_action_reason: "derived_from_decision_summary",
+      },
+      evidence_checked_json: {
+        selected_project_id: state.selectedProjectId,
+        selected_thread_id: state.selectedThreadId,
+        selected_idea_id: state.selectedIdeaId,
+        selection_source: state.selectionSource,
+        archive_candidate_available: state.archiveCandidateAvailable,
+        public_curation_backlog: state.liveBacklog,
+        selected_drive: state.selectedDrive,
+        session_mode: state.sessionMode,
+      },
+      rejected_alternatives_json: {
+        items: state.decisionSummary.rejected_alternatives,
+      },
+      chosen_action: state.decisionSummary.next_action,
+      confidence: state.decisionSummary.confidence,
+      execution_mode: state.executionMode,
+      human_gate_reason: state.humanGateReason,
+      outcome_summary: outcomeSummary,
+    });
+  } catch (e) {
+    const msg = `deliberation_trace insert failed: ${
+      e instanceof Error ? e.message : String(e)
+    }`;
+    console.warn("[session]", msg, { session_id: result.session.session_id });
+    state = { ...state, warnings: [...state.warnings, msg] };
+  }
+
+  return { ...state, metabolismMode };
 }
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
+import { writeChangeRecord } from "@/lib/change-record";
 
 const ALLOWED_SLUGS = ["home", "works", "about", "installation"];
 
@@ -44,5 +45,21 @@ export async function POST(request: Request) {
     .eq("slug", slug);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  const approvedBy =
+    (authClient && (await authClient.auth.getUser()).data.user?.email) ?? "harvey";
+
+  await writeChangeRecord({
+    supabase,
+    change_type: "habitat_update",
+    initiated_by: "harvey",
+    target_type: "public_habitat_content",
+    target_id: null,
+    title: `Public habitat cleared for slug ${slug}`,
+    description: `Manual clear of public_habitat_content for slug '${slug}'. Title, body, and payload_json set to null.`,
+    reason: "manual_habitat_clear",
+    approved_by: approvedBy,
+  });
+
   return NextResponse.json({ ok: true, slug });
 }

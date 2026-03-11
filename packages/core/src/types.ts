@@ -123,6 +123,7 @@ export interface Artifact {
   fertility_score: number | null;
   pull_score: number | null;
   recurrence_score: number | null;
+  target_surface?: string | null;
   artifact_role?: string | null;
   created_at: string;
   updated_at: string;
@@ -200,6 +201,7 @@ export interface ProposalRecord {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  artifact_id?: string | null;
 }
 
 export interface GenerationRun {
