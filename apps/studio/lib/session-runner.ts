@@ -12,6 +12,7 @@ import {
 } from "@twin/evaluation";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { getLatestCreativeState } from "@/lib/creative-state-load";
+import { computePublicCurationBacklog } from "@/lib/curation-backlog";
 import { getBrainContext, buildWorkingContextString } from "@/lib/brain-context";
 import { isProposalEligible } from "@/lib/proposal-eligibility";
 import {
@@ -158,8 +159,15 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
   const supabase = getSupabaseServer();
 
   const { state: previousState } = await getLatestCreativeState(supabase);
-  const mode = computeSessionMode(previousState);
-  const driveWeights = computeDriveWeights(previousState);
+
+  // C-4: Override public_curation_backlog with a live proposal count before session-mode
+  // computation so the mode selection reflects current review queue pressure, not stale
+  // snapshot data from the previous session.
+  const liveBacklog = await computePublicCurationBacklog(supabase);
+  const sessionState = { ...previousState, public_curation_backlog: liveBacklog };
+
+  const mode = computeSessionMode(sessionState);
+  const driveWeights = computeDriveWeights(sessionState);
   const selectedDrive = selectDrive(driveWeights);
   let selectedProjectId: string | null = null;
   let selectedThreadId: string | null = null;
@@ -245,7 +253,7 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       workingContextString = [workingContextString, focusContext].filter(Boolean).join("\n\n");
     }
   }
-  const derivedPreferMedium = derivePreferredMedium(previousState, preferMedium, isCron);
+  const derivedPreferMedium = derivePreferredMedium(sessionState, preferMedium, isCron);
 
   const result = await runSessionPipeline(
     {
