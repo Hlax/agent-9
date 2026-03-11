@@ -16,4 +16,4 @@ export {
   computeSessionMode,
   selectDrive,
 } from "./creative-state.js";
-export type { CreativeStateFields } from "./creative-state.js";
+export type { CreativeStateFields, CreativeStateSignals } from "./creative-state.js";
