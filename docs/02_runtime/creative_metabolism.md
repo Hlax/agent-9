@@ -179,6 +179,7 @@ When thresholds are hit: downgrade to Slow or pause runtime as appropriate.
 - Prefer **derived** runtime variables for metabolism unless persistence is genuinely needed.
 - Do not expand the canonical schema carelessly; respect the distinction between canonical fields (e.g. in `creative_state_snapshot`) and runtime helper signals.
 - Audit whether scheduler config, mode config, token/compute thresholds, or fatigue/drive need to be stored (e.g. for resume after restart).
+- The `runtime_config` table is the canonical persistence layer for scheduler state (`mode`, `always_on`, `last_run_at`, `tokens_used_today`, `tokens_reset_at`). See `data_model.md §runtime_config` for the full key registry, allowed values, and reader/writer notes.
 
 ---
 

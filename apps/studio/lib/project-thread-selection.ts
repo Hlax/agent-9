@@ -20,7 +20,7 @@ export async function selectProjectAndThread(
 ): Promise<ProjectThreadSelection> {
   const { data: projects } = await supabase
     .from("project")
-    .select("project_id")
+    .select("project_id, priority")
     .eq("status", "active")
     .order("updated_at", { ascending: false })
     .limit(50);
@@ -29,7 +29,22 @@ export async function selectProjectAndThread(
     return { projectId: null, ideaThreadId: null, ideaId: null };
   }
 
-  const project = projects[Math.floor(Math.random() * projects.length)];
+  const projectWeights = projects.map((proj) => {
+    const pri = (proj as { priority?: number | null }).priority ?? 0.5;
+    return pri * 0.6 + 0.4;
+  });
+  const projectTotal = projectWeights.reduce((a, b) => a + b, 0) || 1;
+  let projectAcc = 0;
+  const rProj = Math.random();
+  let project = projects[0];
+  for (let i = 0; i < projects.length; i++) {
+    projectAcc += projectWeights[i]! / projectTotal;
+    if (rProj <= projectAcc) {
+      project = projects[i]!;
+      break;
+    }
+    project = projects[i]!;
+  }
   const projectId = project?.project_id ?? null;
 
   if (!projectId) return { projectId: null, ideaThreadId: null, ideaId: null };

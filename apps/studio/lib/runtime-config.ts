@@ -106,6 +106,16 @@ export async function addTokenUsage(supabase: SupabaseClient, delta: number): Pr
   );
 }
 
+/** Count creative_session rows with started_at within the last rolling hour. */
+export async function getSessionsRunInLastHour(supabase: SupabaseClient): Promise<number> {
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { count } = await supabase
+    .from("creative_session")
+    .select("session_id", { count: "exact", head: true })
+    .gte("started_at", oneHourAgo);
+  return count ?? 0;
+}
+
 /** Minimum ms between session runs by mode (canon: creative_metabolism). */
 export function getIntervalMs(mode: RuntimeMode): number {
   switch (mode) {

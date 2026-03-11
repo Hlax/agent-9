@@ -580,6 +580,50 @@ created_at: timestamp
 updated_at: timestamp
 ```
 
+## runtime_config
+
+Singleton key-value store for scheduler and runtime configuration. Not a domain entity; included here because it is a persisted table created alongside the core schema.
+
+```yaml
+key: TEXT (PRIMARY KEY)
+value: TEXT | null
+updated_at: timestamptz
+```
+
+Notes:
+- The table is effectively a singleton: at most one row exists per key, and all writes use `upsert … onConflict: "key"`.
+- All values are stored as `TEXT`; parsing (boolean, integer, ISO date) is done in application code.
+- The table is not row-level multi-tenant; it holds global scheduler state.
+
+### Keys in active use
+
+| Key | Value type | Allowed values | Default | Reader(s) | Writer(s) |
+|-----|-----------|----------------|---------|-----------|-----------|
+| `mode` | string | `slow`, `default`, `steady`, `turbo` | `"default"` (env `RUNTIME_MODE`) | `getRuntimeConfig`, `getIntervalMs`, cron route, `GET /api/runtime/config` | `setRuntimeConfig` — via `PATCH /api/runtime/config` and cron low-token fallback |
+| `always_on` | boolean string | `"true"`, `"false"`, `"1"` | `"false"` (env `ALWAYS_ON_ENABLED`) | `getRuntimeConfig`, cron route | `setRuntimeConfig` — via `PATCH /api/runtime/config` |
+| `last_run_at` | ISO 8601 timestamp | Any valid ISO timestamp | null (no fallback) | `getRuntimeConfig`, cron route | `setLastRunAt` — written after each successful cron-triggered session |
+| `tokens_used_today` | integer string | Non-negative integer | `"0"` | `getRuntimeConfig`, `getTokenUsage`, `addTokenUsage` | `addTokenUsage` — incremented by session runner after each session completes |
+| `tokens_reset_at` | ISO date string | `YYYY-MM-DD` | null | `addTokenUsage` | `addTokenUsage` — written alongside `tokens_used_today`; used to detect day rollover |
+
+### Key-level notes
+
+**`mode`**
+Controls the scheduler's session interval. See `creative_metabolism.md §2` for the mode table.
+Falls back to the `RUNTIME_MODE` environment variable when the DB row is absent or empty.
+
+**`always_on`**
+When `false`, the cron route returns `skipped: always_on_disabled` immediately without attempting a session.
+Falls back to the `ALWAYS_ON_ENABLED` environment variable.
+
+**`last_run_at`**
+Written only on successful session completion; not updated on failure so the scheduler retries at the next interval.
+When absent, the cron route falls back to the latest `creative_session.started_at` before checking the interval guard.
+
+**`tokens_used_today` and `tokens_reset_at`**
+Paired keys that together implement a lightweight daily token counter with automatic rollover.
+If `tokens_reset_at` does not match today's date (UTC), `tokens_used_today` is treated as `0` and the pair is reset on the next write.
+The Low-token threshold (`LOW_TOKEN_THRESHOLD` env) is compared against `tokens_used_today`; when the threshold is exceeded the cron route downgrades mode to `slow`.
+
 ## 4. Generic Association Strategy
 
 V1 does not need fully normalized join tables for every possible association on day one.

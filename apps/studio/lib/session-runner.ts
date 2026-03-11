@@ -31,6 +31,7 @@ import {
   getMaxPendingAvatarProposals,
   getMaxPendingHabitatLayoutProposals,
   isOverTokenLimit,
+  getArchiveDecayHalfLifeDays,
 } from "@/lib/stop-limits";
 import { detectRepetition } from "@/lib/repetition-detection";
 import { addTokenUsage, getRuntimeConfig } from "@/lib/runtime-config";
@@ -185,7 +186,8 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
 
       if (archives && archives.length > 0) {
         const nowMs = Date.now();
-        const decayHalfLifeDays = 60; // older entries get lower weight
+        // Configurable half-life for archive recency decay. Canon: archive_and_return.md §6.
+        const decayHalfLifeDays = getArchiveDecayHalfLifeDays();
         const weights = archives.map((row) => {
           const r = (row.recurrence_score as number | null) ?? 0.5;
           const p = (row.creative_pull as number | null) ?? 0.5;
