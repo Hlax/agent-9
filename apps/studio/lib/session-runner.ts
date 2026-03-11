@@ -690,7 +690,7 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       addedUnfinishedWork: critique.critique_outcome === "archive_candidate",
     };
 
-    const nextState = updateCreativeState(previousState, evaluation, repetitionDetected, sessionSignals);
+    const nextState = updateCreativeState(previousState, evaluation, { repetitionDetected, ...sessionSignals });
     const stateSnapshotRow = stateToSnapshotRow(
       nextState,
       result.session.session_id,
