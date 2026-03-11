@@ -71,7 +71,12 @@ export async function setRuntimeConfig(
 }
 
 export async function setLastRunAt(supabase: SupabaseClient, iso: string): Promise<void> {
-  await supabase.from("runtime_config").upsert([{ key: "last_run_at", value: iso, updated_at: iso }], { onConflict: "key" });
+  const { error } = await supabase
+    .from("runtime_config")
+    .upsert([{ key: "last_run_at", value: iso, updated_at: iso }], { onConflict: "key" });
+  if (error) {
+    console.warn("[runtime_config] setLastRunAt failed", { error: error.message, iso });
+  }
 }
 
 /** Get tokens used today (resets when tokens_reset_at !== today). */
