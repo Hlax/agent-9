@@ -693,7 +693,7 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       provider_name: "openai",
       model_name:
         artifact.medium === "image"
-          ? (process.env.OPENAI_MODEL_IMAGE ?? "gpt-5-nano")
+          ? (process.env.OPENAI_MODEL_IMAGE ?? "dall-e-3")
           : artifact.medium === "concept"
             ? (process.env.OPENAI_MODEL_CONCEPT ??
               process.env.OPENAI_MODEL_GENERATION ??
