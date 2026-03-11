@@ -43,3 +43,16 @@ export const PROPOSAL_STATE_TRANSITIONS: Readonly<Record<string, readonly string
   rejected:  [],
   ignored:   [],
 };
+
+/**
+ * Returns true when moving a proposal from `fromState` to `toState` is a legal
+ * transition according to the canonical map above.
+ *
+ * This is the single authoritative guard for proposal state changes.
+ * Call-sites that previously did ad-hoc checks should delegate here.
+ */
+export function isLegalProposalStateTransition(fromState: string, toState: string): boolean {
+  const allowed = PROPOSAL_STATE_TRANSITIONS[fromState];
+  if (!allowed) return false;
+  return allowed.includes(toState);
+}
