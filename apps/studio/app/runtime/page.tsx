@@ -1,7 +1,8 @@
-"use client";
-
-import { useEffect, useState } from "react";
 import Link from "next/link";
+import { OntologyPanel } from "./ontology-panel";
+import { ContinuityHistory } from "./continuity-history";
+import { HealthPanel } from "./health-panel";
+import { buildRuntimeHealthSummary } from "@/lib/runtime-health";
 
 interface TraceSession {
   session_id: string;
@@ -17,42 +18,58 @@ interface TraceSession {
   created_at: string;
 }
 
-export default function RuntimeDebugPage() {
-  const [state, setState] = useState<Record<string, unknown> | null>(null);
-  const [traces, setTraces] = useState<{ sessions: TraceSession[] } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+async function fetchRuntimeState() {
+  const base = process.env.NEXT_PUBLIC_STUDIO_BASE_URL ?? "";
+  const [stateRes, traceRes, deliberationRes, continuityRes] = await Promise.all([
+    fetch(`${base}/api/runtime/state`, { cache: "no-store" }).then((r) => r.json()),
+    fetch(`${base}/api/runtime/trace`, { cache: "no-store" }).then((r) => r.json()),
+    fetch(`${base}/api/runtime/deliberation`, { cache: "no-store" }).then((r) => r.json()),
+    fetch(`${base}/api/runtime/continuity`, { cache: "no-store" }).then((r) => r.json()),
+  ]);
+  return {
+    state: stateRes as Record<string, unknown> | null,
+    traces: traceRes as { sessions: TraceSession[] } | null,
+    deliberation: deliberationRes as { trace: any } | null,
+    continuity: continuityRes as { sessions: any[]; summary: any } | null,
+  };
+}
 
-  useEffect(() => {
-    Promise.all([fetch("/api/runtime/state").then((r) => r.json()), fetch("/api/runtime/trace").then((r) => r.json())])
-      .then(([stateJson, traceJson]) => {
-        setState(stateJson);
-        setTraces(traceJson);
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"));
-  }, []);
-
-  if (error) {
-    return (
-      <main style={{ maxWidth: 720, margin: "0 auto", padding: "1rem" }}>
-        <p><Link href="/">← Twin Studio</Link></p>
-        <h1>Runtime</h1>
-        <p style={{ color: "#a00" }}>{error}</p>
-      </main>
-    );
-  }
+export default async function RuntimeDebugPage() {
+  const { state, traces, deliberation, continuity } = await fetchRuntimeState();
+  const latestDeliberation = deliberation?.trace ?? null;
+  const health = continuity ? buildRuntimeHealthSummary(continuity.sessions ?? []) : null;
 
   return (
     <main style={{ maxWidth: 720, margin: "0 auto", padding: "1rem" }}>
-      <p><Link href="/">← Twin Studio</Link></p>
+      <p>
+        <Link href="/">← Twin Studio</Link>
+      </p>
       <h1>Runtime (debug)</h1>
       <p style={{ fontSize: "0.9rem", color: "#555" }}>
-        Current state and last 10 session traces. Use this to see how the Twin is wired and why it generated what it did.
+        Current state, recent sessions, and ontology signals. Use this to see how the Twin is wired and how its posture
+        is evolving over time.
       </p>
 
       {state && (
-        <section style={{ marginTop: "1.5rem", border: "1px solid #ddd", borderRadius: 8, padding: "1rem", background: "#fafafa" }}>
+        <section
+          style={{
+            marginTop: "1.5rem",
+            border: "1px solid #ddd",
+            borderRadius: 8,
+            padding: "1rem",
+            background: "#fafafa",
+          }}
+        >
           <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Current state</h2>
-          <pre style={{ margin: 0, fontSize: "0.75rem", overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+          <pre
+            style={{
+              margin: 0,
+              fontSize: "0.75rem",
+              overflow: "auto",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-all",
+            }}
+          >
             {JSON.stringify(
               {
                 runtime: state.runtime,
@@ -68,8 +85,24 @@ export default function RuntimeDebugPage() {
         </section>
       )}
 
+      <OntologyPanel trace={latestDeliberation} />
+
+      <HealthPanel health={health} />
+
+      {continuity && (
+        <ContinuityHistory sessions={continuity.sessions ?? []} summary={continuity.summary ?? null} />
+      )}
+
       {traces && traces.sessions && traces.sessions.length > 0 && (
-        <section style={{ marginTop: "1.5rem", border: "1px solid #ddd", borderRadius: 8, padding: "1rem", background: "#fafafa" }}>
+        <section
+          style={{
+            marginTop: "1.5rem",
+            border: "1px solid #ddd",
+            borderRadius: 8,
+            padding: "1rem",
+            background: "#fafafa",
+          }}
+        >
           <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Last 10 sessions (traces)</h2>
           <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
             {traces.sessions.map((s) => (
@@ -103,7 +136,9 @@ export default function RuntimeDebugPage() {
                       Proposal ({s.proposal_type ?? "—"})
                     </span>
                   )}
-                  {s.tokens_used != null && <span style={{ marginLeft: "0.5rem", color: "#666" }}>{s.tokens_used} tokens</span>}
+                  {s.tokens_used != null && (
+                    <span style={{ marginLeft: "0.5rem", color: "#666" }}>{s.tokens_used} tokens</span>
+                  )}
                 </div>
               </li>
             ))}
@@ -112,7 +147,9 @@ export default function RuntimeDebugPage() {
       )}
 
       {traces && traces.sessions?.length === 0 && (
-        <p style={{ marginTop: "1.5rem", color: "#666" }}>No session traces yet. Run a session to see traces.</p>
+        <p style={{ marginTop: "1.5rem", color: "#666" }}>
+          No session traces yet. Run a session to see traces.
+        </p>
       )}
     </main>
   );

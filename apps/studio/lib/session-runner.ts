@@ -1,14 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { runSessionPipeline } from "@twin/agent";
 import type { SessionPipelineResult } from "@twin/agent";
-import type {
-  Artifact,
-  CreativeSession,
-  CreativeDrive,
-  CritiqueRecord,
-  EvaluationSignal,
-  SessionMode,
-} from "@twin/core";
+import type { Artifact, CreativeSession, CreativeDrive, CritiqueRecord, EvaluationSignal, SessionMode } from "@twin/core";
 import {
   runCritique,
   computeEvaluationSignals,
@@ -50,6 +43,14 @@ import { addTokenUsage, getRuntimeConfig } from "@/lib/runtime-config";
 import { isLegalProposalStateTransition } from "@/lib/governance-rules";
 import { writeDeliberationTrace } from "./deliberation-trace";
 import { createArchiveEntry } from "@twin/memory";
+import {
+  classifyNarrativeState,
+  classifyConfidenceBand,
+  classifyActionKind,
+  deriveTensionKinds,
+  deriveEvidenceKinds,
+  type OntologyState,
+} from "@/lib/ontology-helpers";
 
 /** Create bucket "artifacts" in Supabase Dashboard â†’ Storage if missing. */
 const ARTIFACTS_BUCKET = "artifacts";
@@ -1076,7 +1077,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
             title: artifact.title ?? "Avatar candidate",
             summary: avatarSummary || null,
             proposal_state: "pending_review",
-            target_surface: null,
+            target_surface: "identity",
             proposal_type: "avatar",
             preview_uri: artifact.preview_uri ?? null,
             review_note: null,
@@ -1126,6 +1127,26 @@ async function writeTraceAndDeliberation(
 
   const runtimeConfig = await getRuntimeConfig(supabase);
   const metabolismMode = runtimeConfig.mode;
+  const ontologyState: OntologyState = {
+    sessionMode: state.sessionMode,
+    selectedDrive: state.selectedDrive,
+    selectionSource: state.selectionSource,
+    liveBacklog: state.liveBacklog,
+    previousState: {
+      reflection_need: state.previousState.reflection_need,
+      public_curation_backlog: state.previousState.public_curation_backlog,
+      idea_recurrence: state.previousState.idea_recurrence,
+      avatar_alignment: state.previousState.avatar_alignment,
+    },
+    repetitionDetected: state.repetitionDetected,
+    archiveCandidateAvailable: state.archiveCandidateAvailable,
+    selectedIdeaId: state.selectedIdeaId,
+    proposalCreated: state.proposalCreated,
+    traceProposalType: state.traceProposalType,
+  };
+  const narrativeState = classifyNarrativeState(ontologyState);
+  const confidenceBand = classifyConfidenceBand(state.decisionSummary.confidence);
+  const actionKind = classifyActionKind(ontologyState);
   const traceLabels = await getProjectThreadIdeaTraceLabels(
     supabase,
     state.selectedProjectId,
@@ -1199,15 +1220,19 @@ async function writeTraceAndDeliberation(
         selected_drive: state.selectedDrive,
         selection_source: state.selectionSource,
         metabolism_mode: metabolismMode,
+        narrative_state: narrativeState,
       },
-      state_summary: `mode=${state.sessionMode}, drive=${state.selectedDrive ?? "none"}, public_curation_backlog=${state.liveBacklog}`,
+      state_summary: `mode=${state.sessionMode}, drive=${state.selectedDrive ?? "none"}, public_curation_backlog=${state.liveBacklog}, narrative_state=${narrativeState}`,
       tensions_json: {
         archive_candidates: state.archiveCandidateAvailable,
         public_curation_backlog: state.liveBacklog,
+        tension_kinds: deriveTensionKinds(ontologyState),
       },
       hypotheses_json: {
         selection_reason: selectionReason,
         next_action_reason: "derived_from_decision_summary",
+        action_kind: actionKind,
+        confidence_band: confidenceBand,
       },
       evidence_checked_json: {
         selected_project_id: state.selectedProjectId,
@@ -1218,6 +1243,7 @@ async function writeTraceAndDeliberation(
         public_curation_backlog: state.liveBacklog,
         selected_drive: state.selectedDrive,
         session_mode: state.sessionMode,
+        evidence_kinds: deriveEvidenceKinds(ontologyState),
       },
       rejected_alternatives_json: {
         items: state.decisionSummary.rejected_alternatives,
