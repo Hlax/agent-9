@@ -61,8 +61,10 @@ export function buildRuntimeHealthSummary(rows: ContinuitySessionRow[]): Runtime
     });
   }
 
+  // Exclude "continue_thread" from repetition detection: it is the baseline default
+  // action and its high frequency in healthy windows is expected, not a risk signal.
   const dominantAction = dominantLabel(
-    rows.map((r) => r.action_kind).filter((x): x is string => !!x),
+    rows.map((r) => r.action_kind).filter((x): x is string => !!x && x !== "continue_thread"),
     n
   );
   if (dominantAction) {

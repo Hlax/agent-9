@@ -180,3 +180,77 @@ describe("deriveEvidenceKinds", () => {
   });
 });
 
+describe("classifyNarrativeState priority ordering", () => {
+  it("return mode takes priority over repetitionDetected (stalled)", () => {
+    // If both return mode and repetition are true, return wins
+    const state = makeState({ sessionMode: "return" as any, repetitionDetected: true });
+    expect(classifyNarrativeState(state)).toBe("return");
+  });
+
+  it("archive selectionSource takes priority over reflection_need", () => {
+    const state = makeState({
+      selectionSource: "archive",
+      previousState: { reflection_need: 0.9, public_curation_backlog: 0, idea_recurrence: 0, avatar_alignment: 1 },
+    });
+    expect(classifyNarrativeState(state)).toBe("return");
+  });
+
+  it("stalled takes priority over reflection_need", () => {
+    const state = makeState({
+      repetitionDetected: true,
+      previousState: { reflection_need: 0.9, public_curation_backlog: 0, idea_recurrence: 0, avatar_alignment: 1 },
+    });
+    expect(classifyNarrativeState(state)).toBe("stalled");
+  });
+
+  it("public_curation_backlog alone can trigger curation_pressure", () => {
+    const state = makeState({
+      liveBacklog: 0,
+      previousState: { reflection_need: 0, public_curation_backlog: 0.7, idea_recurrence: 0, avatar_alignment: 1 },
+    });
+    expect(classifyNarrativeState(state)).toBe("curation_pressure");
+  });
+});
+
+describe("classifyActionKind edge cases", () => {
+  it("does not return generate_habitat_candidate when proposalCreated is false", () => {
+    const state = makeState({ proposalCreated: false, traceProposalType: "surface" });
+    expect(classifyActionKind(state)).toBe("continue_thread");
+  });
+
+  it("does not return generate_avatar_candidate when proposalCreated is false", () => {
+    const state = makeState({ proposalCreated: false, traceProposalType: "avatar" });
+    expect(classifyActionKind(state)).toBe("continue_thread");
+  });
+
+  it("returns continue_thread for proposalCreated with unknown proposal type", () => {
+    const state = makeState({ proposalCreated: true, traceProposalType: "unknown_type" });
+    expect(classifyActionKind(state)).toBe("continue_thread");
+  });
+});
+
+describe("deriveTensionKinds edge cases", () => {
+  it("returns empty array when all signals are at baseline", () => {
+    const state = makeState({
+      liveBacklog: 0,
+      archiveCandidateAvailable: false,
+      previousState: { reflection_need: 0, public_curation_backlog: 0, idea_recurrence: 0, avatar_alignment: 1 },
+    });
+    expect(deriveTensionKinds(state)).toEqual([]);
+  });
+
+  it("avatar_alignment exactly at threshold does not trigger identity_pressure", () => {
+    const state = makeState({
+      previousState: { reflection_need: 0, public_curation_backlog: 0, idea_recurrence: 0, avatar_alignment: 0.4 },
+    });
+    expect(deriveTensionKinds(state)).not.toContain("identity_pressure");
+  });
+
+  it("avatar_alignment just below threshold triggers identity_pressure", () => {
+    const state = makeState({
+      previousState: { reflection_need: 0, public_curation_backlog: 0, idea_recurrence: 0, avatar_alignment: 0.39 },
+    });
+    expect(deriveTensionKinds(state)).toContain("identity_pressure");
+  });
+});
+

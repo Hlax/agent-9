@@ -177,3 +177,116 @@ describe("runtime continuity helpers", () => {
   });
 });
 
+describe("runtime continuity edge cases", () => {
+  it("buildContinuityRows returns empty array when sessions is empty", () => {
+    const rows = buildContinuityRows({ sessions: [], traces: [], proposals: [], artifacts: [] });
+    expect(rows).toHaveLength(0);
+  });
+
+  it("buildContinuityRows handles sessions with no matching trace gracefully", () => {
+    const sessions = [
+      {
+        session_id: "s-no-trace",
+        created_at: "2026-03-10T10:00:00.000Z",
+        trace: { artifact_id: "a1", proposal_id: null, proposal_type: null },
+        decision_summary: {},
+      },
+    ] as any[];
+    const rows = buildContinuityRows({ sessions, traces: [], proposals: [], artifacts: [] });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].session_id).toBe("s-no-trace");
+    expect(rows[0].narrative_state).toBeNull();
+    expect(rows[0].action_kind).toBeNull();
+    expect(rows[0].tension_kinds).toEqual([]);
+    expect(rows[0].evidence_kinds).toEqual([]);
+  });
+
+  it("buildContinuityRows picks the latest deliberation trace when multiple exist for one session", () => {
+    const sessions = [
+      {
+        session_id: "s1",
+        created_at: "2026-03-10T10:00:00.000Z",
+        trace: {},
+        decision_summary: {},
+      },
+    ] as any[];
+    const traces = [
+      {
+        session_id: "s1",
+        observations_json: { narrative_state: "expansion" },
+        tensions_json: {},
+        hypotheses_json: { action_kind: "continue_thread", confidence_band: "low" },
+        evidence_checked_json: {},
+        confidence: 0.3,
+        created_at: "2026-03-10T10:00:00.000Z",
+      },
+      {
+        session_id: "s1",
+        observations_json: { narrative_state: "reflection" },
+        tensions_json: {},
+        hypotheses_json: { action_kind: "resurface_archive", confidence_band: "high" },
+        evidence_checked_json: {},
+        confidence: 0.9,
+        created_at: "2026-03-10T10:01:00.000Z", // later timestamp
+      },
+    ] as any[];
+    const rows = buildContinuityRows({ sessions, traces, proposals: [], artifacts: [] });
+    expect(rows).toHaveLength(1);
+    // Should use the latest trace (10:01), not the earliest
+    expect(rows[0].narrative_state).toBe("reflection");
+    expect(rows[0].action_kind).toBe("resurface_archive");
+    expect(rows[0].confidence).toBe(0.9);
+  });
+
+  it("buildContinuityRows falls back to deriving confidence_band from numeric confidence when trace lacks it", () => {
+    const sessions = [
+      {
+        session_id: "s1",
+        created_at: "2026-03-10T10:00:00.000Z",
+        trace: {},
+        decision_summary: {},
+      },
+    ] as any[];
+    const traces = [
+      {
+        session_id: "s1",
+        observations_json: {},
+        tensions_json: {},
+        // No confidence_band in hypotheses_json
+        hypotheses_json: {},
+        evidence_checked_json: {},
+        confidence: 0.8,
+        created_at: "2026-03-10T10:00:00.000Z",
+      },
+    ] as any[];
+    const rows = buildContinuityRows({ sessions, traces, proposals: [], artifacts: [] });
+    expect(rows[0].confidence).toBe(0.8);
+    expect(rows[0].confidence_band).toBe("high");
+  });
+
+  it("buildContinuityRows does not expose proposal_role when proposal_id is missing from trace", () => {
+    const sessions = [
+      {
+        session_id: "s1",
+        created_at: "2026-03-10T10:00:00.000Z",
+        trace: { proposal_id: null },
+        decision_summary: {},
+      },
+    ] as any[];
+    const proposals = [{ proposal_record_id: "p1", proposal_role: "avatar_candidate" }] as any[];
+    const rows = buildContinuityRows({ sessions, traces: [], proposals, artifacts: [] });
+    expect(rows[0].proposal_created).toBe(false);
+    expect(rows[0].proposal_role).toBeNull();
+  });
+
+  it("buildContinuityAggregate returns nulls/zeros for empty input", () => {
+    const summary = buildContinuityAggregate([]);
+    expect(summary.total_sessions).toBe(0);
+    expect(summary.average_confidence).toBeNull();
+    expect(summary.proposal_session_count).toBe(0);
+    expect(summary.narrative_counts).toEqual({});
+    expect(summary.action_counts).toEqual({});
+    expect(summary.tension_counts).toEqual({});
+  });
+});
+

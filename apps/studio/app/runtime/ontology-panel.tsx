@@ -1,3 +1,5 @@
+import { buildSummaryLineFromParts } from "@/lib/runtime-continuity";
+
 interface OntologySummaryProps {
   trace: {
     observations_json: Record<string, unknown> | null;
@@ -15,23 +17,13 @@ function buildSummaryLine(trace: OntologySummaryProps["trace"]): string {
   const hyp = (trace.hypotheses_json ?? {}) as Record<string, unknown>;
   const ev = (trace.evidence_checked_json ?? {}) as Record<string, unknown>;
 
-  const narrativeState = (obs.narrative_state as string) ?? "unknown posture";
-  const tensionKinds = (tens.tension_kinds as unknown[]) ?? [];
-  const actionKind = (hyp.action_kind as string) ?? "an action";
-  const confidenceBand = (hyp.confidence_band as string) ?? "unknown";
-  const evidenceKinds = (ev.evidence_kinds as unknown[]) ?? [];
+  const narrative_state = (obs.narrative_state as string) ?? null;
+  const tension_kinds = Array.isArray(tens.tension_kinds) ? (tens.tension_kinds as string[]) : [];
+  const action_kind = (hyp.action_kind as string) ?? null;
+  const confidence_band = (hyp.confidence_band as string) ?? null;
+  const evidence_kinds = Array.isArray(ev.evidence_kinds) ? (ev.evidence_kinds as string[]) : [];
 
-  const tensionPart =
-    Array.isArray(tensionKinds) && tensionKinds.length > 0
-      ? `saw ${tensionKinds.join(" and ")}`
-      : "saw no major named tensions";
-
-  const evidencePart =
-    Array.isArray(evidenceKinds) && evidenceKinds.length > 0
-      ? `relied on ${evidenceKinds.join(" and ")}`
-      : "relied on internal creative state";
-
-  return `Twin stayed in ${narrativeState}, ${tensionPart}, and chose ${actionKind} with ${confidenceBand} confidence while it ${evidencePart}.`;
+  return buildSummaryLineFromParts({ narrative_state, tension_kinds, action_kind, confidence_band, evidence_kinds });
 }
 
 function readableList(values: unknown[] | undefined | null): string {

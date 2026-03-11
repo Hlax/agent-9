@@ -55,9 +55,6 @@ export function classifyActionKind(state: OntologyState): string {
   if (state.proposalCreated && state.traceProposalType === "avatar") {
     return "generate_avatar_candidate";
   }
-  if (state.sessionMode === "return") {
-    return "continue_thread";
-  }
   return "continue_thread";
 }
 
