@@ -34,7 +34,8 @@ Cron reads `getRuntimeConfig(supabase)` and skips running if the interval since 
 
 - **Session mode**: `explore` | `return` (and possibly others from `computeSessionMode` in `@twin/evaluation`). Derived from creative state and `public_curation_backlog`.
 - **Drive**: Selected by `selectDrive(driveWeights)` from `computeDriveWeights(sessionState)`. Both use the latest creative state plus live backlog.
-- **Purpose**: Session mode determines focus selection (e.g. "return" uses archive_entry); drive influences the pipeline’s creative direction. They do not by themselves change governance (no self-approve or self-publish).
+- **Drive steering status**: Drive is currently a **descriptive/observability label**. It is computed, stored on `creative_session.selected_drive`, and recorded in the session trace and `deliberation_trace.observations_json.selected_drive`. It is **not** injected into the generation prompt and does not branch the pipeline. Drive represents what the system "intends" in a session; injecting it into generation prompts is a future evolution when runtime evidence shows it would meaningfully differentiate output.
+- **Purpose**: Session mode determines focus selection (e.g. "return" uses archive_entry). Drive is descriptive — informing observability and future steering — but does not by itself change generation content, focus, or governance.
 
 ---
 

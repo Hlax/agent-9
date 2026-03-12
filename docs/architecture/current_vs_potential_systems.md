@@ -231,7 +231,9 @@ This document maps **current runtime systems** to **canon-defined** and **potent
 
 **Current state:** Drive is computed (computeDriveWeights, selectDrive) and stored on creative_session and in trace and deliberation_trace. It is **not** passed to generateWriting or generateImage. SessionContext has selectedDrive but the agent does not include it in the prompt. So drive is **stored and traced only**; it does not steer generation.
 
-**Gap:** No injection of drive (or a short label) into the generation user prompt. Either document drive as descriptive only or add it to the prompt in `packages/agent/src/generate-writing.ts` (and image path if desired).
+**Decision (architecture closure audit 2026-03-12):** Drive is formally classified as a **descriptive/observability label** for the current architecture. It is not injected into the generation prompt. This is intentional: there is no runtime evidence yet that drive injection would meaningfully differentiate output. Drive injection into generation prompts is a future evolution (deferred to Group 3 of the implementation sequence). See `docs/architecture/architecture_closure_audit.md` §D.1 and §F.
+
+**No gap pending:** The canon description "drive influences the pipeline's creative direction" means drive influences mode/focus decisions (via computeDriveWeights → computeSessionMode), not that it must appear in the generation prompt. This is documented in `docs/canon_v2/02_runtime/creative_metabolism.md` §3.
 
 ---
 
@@ -241,7 +243,7 @@ This document maps **current runtime systems** to **canon-defined** and **potent
 
 **Current state:** Concept intent is **inferred after the fact** from medium and path (concept → layout_spec, image → avatar_exploration). There is no concept_intent or artifact_intent field set before generation or passed into the prompt. Artifact role (layout_concept, image_concept) is inferred from medium + isCron after generation.
 
-**Gap:** No first-class pre-generation concept intent. To align with canon’s future upgrade would require: an explicit intent step (or derived intent) before generation and a prompt slot for intent so the model can adjust tone/content.
+**Gap:** No first-class pre-generation concept intent. This is a future evolution (deferred to Group 3 of the implementation sequence). See `docs/architecture/architecture_closure_audit.md` §C.4.
 
 ---
 
@@ -249,9 +251,9 @@ This document maps **current runtime systems** to **canon-defined** and **potent
 
 **Canon / UI:** Trajectory review and deliberation trace include confidence and confidence_band; ontology panel shows them.
 
-**Current state:** decisionSummary.confidence is initialized to 0.7 in initializeExecutionState and is **never updated** from critique or evaluation in the runner. classifyConfidenceBand(confidence) maps it to low/medium/high for trace. So confidence is a **placeholder/default**, not derived from model or critique.
+**Current state (updated):** `applyConfidenceFromCritique` (session-runner.ts) now derives confidence as `(alignment_score + pull_score) / 2` and sets `confidence_truth = "inferred"` when evaluation is available, or `"defaulted"` when not. `decisionSummary.confidence` is no longer always 0.7; it is a real score from critique. `guardrail_stop = "low_confidence"` stops cron batches when confidence is below threshold.
 
-**Gap:** Either derive confidence from evaluation/critique (e.g. single scalar or band) and set it in the runner, or document in observability that confidence_band is defaulted and not critique-derived.
+**Status:** Implemented. See `applyConfidenceFromCritique` in session-runner.ts.
 
 ---
 
@@ -261,9 +263,9 @@ This document maps **current runtime systems** to **canon-defined** and **potent
 
 **Canon:** light_ontology and twin_decision_system list proposal_role `system_change_proposal` and decision_class / system_governed as reserved. System lanes exist in UI/canon for proposals that affect runtime logic, ontology, or configuration.
 
-**Runtime:** No code path creates a proposal_record with proposal_role or target_type for system change. manageProposals only creates habitat_layout (concept) and avatar_candidate (image). No system_change_proposal creation, caps, or apply flow.
+**Runtime:** No code path creates a proposal_record with lane_type = "system". manageProposals creates habitat_layout (concept), avatar_candidate (image), and extension proposals (medium lane). No system_change_proposal creation, caps, or apply flow in the runner.
 
-**Verdict:** Defined in canon; **not implemented** in runtime.
+**Verdict (architecture closure audit 2026-03-12):** System proposals are **intentionally human-initiated only**. The runner signals capability gaps through medium-lane extension proposals. System proposals — which affect platform, runtime, or governance behavior — require deliberate human judgment. This is a formal policy, not a pending implementation. See `docs/architecture/proposal_resolution_lanes_canon.md` §System proposals — initiation rule.
 
 ---
 
@@ -361,10 +363,10 @@ trace + observability (session trace, deliberation_trace, trajectory_review, run
 | Proposal system | Implemented | habitat_layout, avatar_candidate; eligibility + caps; no apply by runner |
 | Governance | Implemented | governance-rules.ts; artifact and proposal transition guards; human-gated apply |
 | Observability | Implemented | trace, deliberation_trace, trajectory_review, runtime-state-api, continuity |
-| Drive in generation | Partially implemented | Stored and traced; not in prompt |
-| Explicit concept intent | Partially implemented | Inferred post-generation only; canon defines as future layer |
-| Confidence signal | Partially implemented | Default 0.7; not derived from critique/evaluation |
-| System proposal lane | Not implemented | Canon only; no runtime creation or apply |
+| Drive in generation | **Descriptive by design** | Stored, traced, and formally classified as observability label; generation prompt injection deferred to later evolution |
+| Explicit concept intent | Deferred | Inferred post-generation only; canon defines as future layer; deferred to Group 3 |
+| Confidence signal | Implemented | `applyConfidenceFromCritique` derives (alignment + pull) / 2; confidence_truth "inferred" or "defaulted"; guardrail_stop on low_confidence |
+| System proposal lane | **Policy: human-initiated only** | Runner creates medium-lane extension proposals; system proposals are human-initiated by design; formally documented in proposal_resolution_lanes_canon.md |
 | Surface patch engine | Not implemented | Concept → proposal with payload; no generic patch/rollback engine |
 | Medium extension | Not implemented | Mediums fixed (writing, concept, image); schema has audio/video unused |
 | Staging auto-mutation | Not implemented | All staging/public mutation human-gated |
