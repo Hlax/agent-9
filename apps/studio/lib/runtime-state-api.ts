@@ -4,7 +4,7 @@
  * relative URLs, which causes ERR_INVALID_URL in production.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getRuntimeConfig } from "@/lib/runtime-config";
+import { getRuntimeConfig, getSessionsRunInLastHour } from "@/lib/runtime-config";
 import { getSynthesisPressure, computeSynthesisPressure } from "@/lib/synthesis-pressure";
 import { buildContinuityRows, buildContinuityAggregate } from "@/lib/runtime-continuity";
 
@@ -21,6 +21,8 @@ export async function getRuntimeStatePayload(supabase: SupabaseClient | null) {
     return {
       snapshot: null,
       backlog: { artifacts: {} as Record<string, number>, proposals: {} as Record<string, number> },
+      artifact_breakdown: { total: 0, internal: 0, reviewable: 0, approval_candidates: 0 },
+      artifact_breakdown_hour: { sessions: 0, total: 0, internal: 0, reviewable: 0, approval_candidates: 0 },
       runtime: { mode: "default", always_on: false, tokens_used_today: 0, last_run_at: null },
       return_candidates: 0,
       creative_state: null,
@@ -30,7 +32,9 @@ export async function getRuntimeStatePayload(supabase: SupabaseClient | null) {
     };
   }
 
-  const [stateRes, artifactBacklogRes, proposalBacklogRes, archiveCountRes, runtimeConfig, latestSessionRes, synthesisPressurePayload] =
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+  const [stateRes, artifactBacklogRes, artifactHourRes, proposalBacklogRes, archiveCountRes, runtimeConfig, latestSessionRes, synthesisPressurePayload, sessionsLastHour] =
     await Promise.all([
       supabase
         .from("creative_state_snapshot")
@@ -41,6 +45,10 @@ export async function getRuntimeStatePayload(supabase: SupabaseClient | null) {
       supabase
         .from("artifact")
         .select("medium, artifact_role, current_approval_state", { count: "exact", head: false }),
+      supabase
+        .from("artifact")
+        .select("medium, artifact_role, current_approval_state", { count: "exact", head: false })
+        .gte("created_at", oneHourAgo),
       supabase
         .from("proposal_record")
         .select("proposal_role, proposal_state, lane_type, target_surface", {
@@ -56,20 +64,52 @@ export async function getRuntimeStatePayload(supabase: SupabaseClient | null) {
         .limit(1)
         .maybeSingle(),
       getSynthesisPressure(supabase),
+      getSessionsRunInLastHour(supabase),
     ]);
 
   const { data: snapshot, error: stateError } = stateRes;
 
-  const artifactBacklog =
-    artifactBacklogRes.data?.reduce(
-      (acc: Record<string, number>, row: Record<string, unknown>) => {
-        const role = (row.artifact_role as string) ?? "none";
-        const key = `${row.current_approval_state ?? "none"}__${role}`;
-        acc[key] = (acc[key] ?? 0) + 1;
-        return acc;
-      },
-      {} as Record<string, number>
-    ) ?? {};
+  const artifactRows = artifactBacklogRes.data ?? [];
+
+  const artifactBacklog = artifactRows.reduce(
+    (acc: Record<string, number>, row: Record<string, unknown>) => {
+      const role = (row.artifact_role as string) ?? "none";
+      const key = `${row.current_approval_state ?? "none"}__${role}`;
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>
+  );
+
+  const REVIEWABLE_STATES = ["pending_review", "needs_revision", "approved", "approved_for_publication"];
+  const APPROVAL_CANDIDATE_STATES = ["approved", "approved_for_publication"];
+  const artifact_breakdown = {
+    total: artifactRows.length,
+    internal: artifactRows.filter((r) => (r.artifact_role as string) === "reflection_note").length,
+    reviewable: artifactRows.filter((r) => {
+      const role = r.artifact_role as string;
+      const state = (r.current_approval_state as string) ?? "";
+      return role !== "reflection_note" && REVIEWABLE_STATES.includes(state);
+    }).length,
+    approval_candidates: artifactRows.filter((r) =>
+      APPROVAL_CANDIDATE_STATES.includes((r.current_approval_state as string) ?? "")
+    ).length,
+  };
+
+  const artifactHourRows = artifactHourRes.data ?? [];
+  const artifact_breakdown_hour = {
+    sessions: sessionsLastHour,
+    total: artifactHourRows.length,
+    internal: artifactHourRows.filter((r) => (r.artifact_role as string) === "reflection_note").length,
+    reviewable: artifactHourRows.filter((r) => {
+      const role = r.artifact_role as string;
+      const state = (r.current_approval_state as string) ?? "";
+      return role !== "reflection_note" && REVIEWABLE_STATES.includes(state);
+    }).length,
+    approval_candidates: artifactHourRows.filter((r) =>
+      APPROVAL_CANDIDATE_STATES.includes((r.current_approval_state as string) ?? "")
+    ).length,
+  };
 
   const proposalBacklog =
     proposalBacklogRes.data?.reduce(
@@ -112,6 +152,8 @@ export async function getRuntimeStatePayload(supabase: SupabaseClient | null) {
   return {
     snapshot: stateError || !snapshot ? null : snapshot,
     backlog: { artifacts: artifactBacklog, proposals: proposalBacklog },
+    artifact_breakdown,
+    artifact_breakdown_hour,
     runtime,
     return_candidates: returnCandidatesCount,
     creative_state,

@@ -76,38 +76,82 @@ export default async function RuntimeDebugPage() {
       </p>
 
       {state && (
-        <section
-          style={{
-            marginTop: "1.5rem",
-            border: "1px solid #ddd",
-            borderRadius: 8,
-            padding: "1rem",
-            background: "#fafafa",
-          }}
-        >
-          <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Current state</h2>
-          <pre
+        <>
+          <section
             style={{
-              margin: 0,
-              fontSize: "0.75rem",
-              overflow: "auto",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-all",
+              marginTop: "1.5rem",
+              border: "1px solid #ddd",
+              borderRadius: 8,
+              padding: "1rem",
+              background: "#fafafa",
             }}
           >
-            {JSON.stringify(
-              {
-                runtime: state.runtime,
-                creative_state: state.creative_state,
-                active_project: state.active_project,
-                active_thread: state.active_thread,
-                return_candidates: state.return_candidates,
-              },
-              null,
-              2
-            )}
-          </pre>
-        </section>
+            <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Artifact breakdown</h2>
+            <p style={{ fontSize: "0.85rem", color: "#555", margin: "0 0 0.5rem" }}>
+              Persisted vs approval-worthy: total artifacts, internal (reflection) only, reviewable (queue + approved), and approval candidates.
+            </p>
+            {(() => {
+              const breakdown = (state as Record<string, { total: number; internal: number; reviewable: number; approval_candidates: number } | undefined>).artifact_breakdown;
+              if (!breakdown) return null;
+              return (
+                <ul style={{ listStyle: "none", padding: 0, margin: 0, fontSize: "0.9rem" }}>
+                  <li><strong>Total artifacts:</strong> {breakdown.total}</li>
+                  <li><strong>Internal (reflection notes):</strong> {breakdown.internal}</li>
+                  <li><strong>Reviewable (queue + approved):</strong> {breakdown.reviewable}</li>
+                  <li><strong>Approval candidates:</strong> {breakdown.approval_candidates}</li>
+                </ul>
+              );
+            })()}
+            {(() => {
+              const hour = (state as Record<string, { sessions: number; total: number; internal: number; reviewable: number; approval_candidates: number } | undefined>).artifact_breakdown_hour;
+              if (!hour) return null;
+              return (
+                <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid #ddd" }}>
+                  <h3 style={{ fontSize: "0.9rem", margin: "0 0 0.5rem" }}>Last rolling hour</h3>
+                  <ul style={{ listStyle: "none", padding: 0, margin: 0, fontSize: "0.9rem" }}>
+                    <li><strong>Sessions:</strong> {hour.sessions}</li>
+                    <li><strong>Total artifacts:</strong> {hour.total}</li>
+                    <li><strong>Internal (reflection notes):</strong> {hour.internal}</li>
+                    <li><strong>Reviewable (queue + approved):</strong> {hour.reviewable}</li>
+                    <li><strong>Approval candidates:</strong> {hour.approval_candidates}</li>
+                  </ul>
+                </div>
+              );
+            })()}
+          </section>
+          <section
+            style={{
+              marginTop: "1.5rem",
+              border: "1px solid #ddd",
+              borderRadius: 8,
+              padding: "1rem",
+              background: "#fafafa",
+            }}
+          >
+            <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Current state</h2>
+            <pre
+              style={{
+                margin: 0,
+                fontSize: "0.75rem",
+                overflow: "auto",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-all",
+              }}
+            >
+              {JSON.stringify(
+                {
+                  runtime: state.runtime,
+                  creative_state: state.creative_state,
+                  active_project: state.active_project,
+                  active_thread: state.active_thread,
+                  return_candidates: state.return_candidates,
+                },
+                null,
+                2
+              )}
+            </pre>
+          </section>
+        </>
       )}
 
       <OntologyPanel trace={latestDeliberation as OntologySummaryProps["trace"]} />
