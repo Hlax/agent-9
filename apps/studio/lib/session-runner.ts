@@ -1398,6 +1398,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
             proposal_state: "pending_review",
             target_surface: "identity",
             proposal_type: "avatar",
+            proposal_role: "avatar_candidate",
             preview_uri: artifact.preview_uri ?? null,
             review_note: null,
             created_by: state.createdBy,
@@ -1572,7 +1573,8 @@ async function writeTraceAndDeliberation(
           : (process.env.OPENAI_MODEL_GENERATION ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini"),
   };
   const trace = {
-    mode: metabolismMode,
+    session_mode: state.sessionMode,
+    metabolism_mode: metabolismMode,
     drive: state.selectedDrive ?? null,
     project_id: state.selectedProjectId ?? null,
     project_name: traceLabels.project_name ?? null,
