@@ -1589,6 +1589,9 @@ async function writeTraceAndDeliberation(
     generation_model: generationRunRow.model_name,
     start_time: result.session.started_at,
     end_time: result.session.ended_at ?? new Date().toISOString(),
+    // Phase 1–3 runtime observability fields
+    // Added to trace for medium resolution, capability-fit classification,
+    // and extension proposal diagnostics.
     requested_medium: state.requested_medium ?? null,
     executed_medium: state.executed_medium ?? null,
     fallback_reason: state.fallback_reason ?? null,
