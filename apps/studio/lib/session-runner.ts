@@ -646,6 +646,11 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
   state = await buildContexts(state);
   state = await runGeneration(state);
   if (!state.primaryArtifact || !state.pipelineResult) {
+    // Still attempt trajectory review for no-artifact sessions when persistence exists.
+    // persistTrajectoryReview will no-op if there is no session to attach the row to.
+    if (state.supabase && state.pipelineResult) {
+      state = await persistTrajectoryReview(state);
+    }
     return finalizeResult(state);
   }
   state = await runCritiqueAndEvaluation(state);
@@ -1346,6 +1351,7 @@ async function writeTraceAndDeliberation(
         selected_drive: state.selectedDrive,
         session_mode: state.sessionMode,
         evidence_kinds: deriveEvidenceKinds(ontologyState),
+        return_selection_debug: state.returnSelectionDebug ?? null,
       },
       rejected_alternatives_json: {
         items: state.decisionSummary.rejected_alternatives,
@@ -1380,7 +1386,9 @@ async function persistTrajectoryReview(
   const result = state.pipelineResult;
   const artifact = state.primaryArtifact;
   const critique = state.critique;
-  if (!supabase || !result || !artifact || !critique) return state;
+  // Only require supabase + result (session_id). artifact/critique being absent is
+  // recorded as has_artifact/has_critique: false so no-generation sessions still get a row.
+  if (!supabase || !result) return state;
 
   const ontologyState: OntologyState = {
     sessionMode: state.sessionMode,
@@ -1420,8 +1428,8 @@ async function persistTrajectoryReview(
     confidence: state.decisionSummary.confidence,
     proposal_created: state.proposalCreated,
     repetition_detected: state.repetitionDetected,
-    has_artifact: true,
-    has_critique: true,
+    has_artifact: Boolean(artifact),
+    has_critique: Boolean(critique),
     has_evaluation: Boolean(state.evaluation),
     memory_record_created: state.memoryRecordCreated,
     archive_entry_created: state.archiveEntryCreated,

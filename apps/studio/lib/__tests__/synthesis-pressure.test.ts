@@ -1,5 +1,6 @@
 import {
   computeSynthesisPressure,
+  getSynthesisPressure,
   deriveRecurrencePullSignal,
   deriveUnfinishedPullSignal,
   deriveArchiveCandidatePressure,
@@ -187,5 +188,35 @@ describe("synthesis-pressure", () => {
       expect(deriveMomentum(0.4)).toBe(0.4);
       expect(deriveMomentum(null)).toBe(0.5);
     });
+  });
+});
+
+describe("getSynthesisPressure", () => {
+  it("returns safe-default payload without throwing when Supabase is unavailable", async () => {
+    // Simulate a Supabase client whose queries throw (e.g. network outage).
+    const failingSupabase = {
+      from: () => {
+        throw new Error("DB unavailable");
+      },
+    } as unknown as import("@supabase/supabase-js").SupabaseClient;
+
+    const result = await getSynthesisPressure(failingSupabase);
+
+    expect(result).toMatchObject({
+      raw_score: expect.any(Number),
+      synthesis_pressure: expect.any(Number),
+      band: expect.stringMatching(/^(low|rising|high|convert_now)$/),
+      momentum_gate_applied: expect.any(Boolean),
+      momentum: expect.any(Number),
+    });
+    expect(result.components).toMatchObject({
+      recurrence_pull_signal: expect.any(Number),
+      unfinished_pull_signal: expect.any(Number),
+      archive_candidate_pressure: expect.any(Number),
+      return_success_trend: expect.any(Number),
+      repetition_without_movement_penalty: expect.any(Number),
+    });
+    // Safe defaults: archive pressure should be 0, not inflated.
+    expect(result.components.archive_candidate_pressure).toBe(0);
   });
 });
