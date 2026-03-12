@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { computeStyleProfile, evaluateProposalStyle, type StyleAnalysisInput } from "@/lib/style-profile";
+import { evaluateProposalRelationship, type ProposalForRelationship } from "@/lib/proposal-relationship";
+import { buildConceptFamilies } from "@/lib/proposal-families";
 
 /**
  * GET /api/staging/proposals — proposals for staging habitat (approved_for_staging, staged).
@@ -24,9 +26,14 @@ export async function GET() {
 
     const proposals = (data ?? []) as Array<{
       proposal_record_id: string;
+      lane_type: string | null;
+      target_type: string | null;
+      target_surface: string | null;
+      proposal_role: string | null;
       title: string | null;
       summary: string | null;
       habitat_payload_json: unknown;
+      created_at: string | null;
     }>;
 
     const styleWindowSize = 40;
@@ -67,19 +74,48 @@ export async function GET() {
     }
     const { profile, repeatedTitles } = computeStyleProfile(styleInputs);
 
-    const scored = proposals.map((p) => {
-      const text =
+    const relInputs: ProposalForRelationship[] = proposals.map((p) => ({
+      id: p.proposal_record_id,
+      title: p.title ?? "",
+      summary: p.summary ?? null,
+      payloadText:
         p.habitat_payload_json && typeof p.habitat_payload_json === "object"
           ? JSON.stringify(p.habitat_payload_json).slice(0, 800)
-          : null;
+          : null,
+      targetSurface: p.target_surface ?? null,
+      proposalRole: p.proposal_role ?? null,
+      targetType: p.target_type ?? null,
+      laneType: p.lane_type ?? "surface",
+      createdAt: p.created_at ?? null,
+    }));
+
+    const { families } = buildConceptFamilies(relInputs, (current, all) => {
+      const rel = evaluateProposalRelationship(current, all);
+      return { kind: rel.kind, relatedProposalId: rel.relatedProposalId };
+    });
+
+    const scored = proposals.map((p, idx) => {
+      const text = relInputs[idx].payloadText;
       const evalResult = evaluateProposalStyle({
         proposal: { title: p.title ?? "", summary: p.summary ?? null, text },
         styleProfile: profile,
         repeatedTitles,
       });
+      const relationship = evaluateProposalRelationship(relInputs[idx], relInputs);
+      const family = families.find((f) => f.member_ids.includes(p.proposal_record_id));
       return {
         ...p,
         ...evalResult,
+        relationship_kind: relationship.kind,
+        relationship_ref_proposal_id: relationship.relatedProposalId,
+        relationship_reason: relationship.reason,
+        concept_family_id: family?.family_id ?? null,
+        concept_family_member_count: family?.member_ids.length ?? 0,
+        concept_family_is_representative: family ? family.representative_proposal_id === p.proposal_record_id : false,
+        concept_family_is_contested: family?.is_contested ?? false,
+        concept_family_needs_consolidation: family?.needs_consolidation ?? false,
+        concept_family_recommendation: family?.recommendation ?? null,
+        concept_family_recommendation_reason: family?.recommendation_reason ?? null,
       };
     });
 

@@ -65,6 +65,8 @@ import {
   type TasteBiasPayload,
 } from "./trajectory-taste-bias";
 import { createArchiveEntry } from "@twin/memory";
+import { getRuntimeConfig } from "@/lib/runtime-config";
+import { getRuntimeStatePayload } from "@/lib/runtime-state-api";
 import {
   classifyNarrativeState,
   classifyConfidenceBand,
@@ -662,6 +664,35 @@ async function buildContexts(state: SessionExecutionState): Promise<SessionExecu
       );
       const styleBlock = lines.join("\n");
       workingContext = [workingContext, styleBlock].filter(Boolean).join("\n\n");
+    }
+
+    // Soft trajectory guidance: fetch current runtime trajectory and surface as advisory context only.
+    const runtimePayload = await getRuntimeStatePayload(state.supabase);
+    const trajectory = (runtimePayload as Record<string, any>).trajectory as
+      | { mode: string; horizon_sessions: number; reason: string; focus_bias?: string[]; style_direction?: string; proposal_pressure?: string }
+      | null
+      | undefined;
+    if (trajectory) {
+      const lines: string[] = [];
+      lines.push("Runtime trajectory (directional guidance for this session; do not override governance or safety):");
+      lines.push(`- Mode: ${trajectory.mode} (horizon ~${trajectory.horizon_sessions} sessions).`);
+      if (trajectory.style_direction) {
+        lines.push(`- Style direction: ${trajectory.style_direction}.`);
+      }
+      if (trajectory.proposal_pressure) {
+        lines.push(`- Proposal pressure: ${trajectory.proposal_pressure}.`);
+      }
+      if (Array.isArray(trajectory.focus_bias) && trajectory.focus_bias.length > 0) {
+        lines.push("- Focus instincts:");
+        for (const item of trajectory.focus_bias) {
+          lines.push(`  • ${item}`);
+        }
+      }
+      lines.push(
+        "Interpret this as a soft steering signal when choosing between valid paths. Never skip required critique, governance gates, or safety checks because of trajectory."
+      );
+      const trajectoryBlock = lines.join("\n");
+      workingContext = [workingContext, trajectoryBlock].filter(Boolean).join("\n\n");
     }
   }
 

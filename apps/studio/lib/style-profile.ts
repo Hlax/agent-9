@@ -1,3 +1,5 @@
+import { getEffectiveStyleLexicon, type StyleLexicon } from "@/lib/style-lexicon";
+
 export type StylePressure = "coherent" | "drifting" | "repetitive";
 
 export interface StyleProfile {
@@ -31,30 +33,18 @@ export interface ProposalStyleEvaluation {
   style_score: number;
 }
 
-/**
- * Lightweight lexical style lexicon.
- * Each key is a human-readable style label; values are lowercase keywords to scan for.
- */
-export const STYLE_LEXICON: Record<string, string[]> = {
-  minimalist: ["minimal", "minimalist", "clean", "sparse", "simple", "uncluttered"],
-  maximalist: ["maximal", "maximalist", "dense", "busy", "ornate", "layered", "complex"],
-  playful: ["playful", "whimsical", "fun", "quirky", "cheerful"],
-  serious: ["serious", "austere", "formal", "somber", "solemn"],
-  retro: ["retro", "vintage", "analog", "nostalgic", "old-school", "old school"],
-  futuristic: ["futuristic", "sci-fi", "cyber", "neon", "hi-tech", "high-tech"],
-  organic: ["organic", "hand-drawn", "hand drawn", "textured", "imperfect", "warm", "human"],
-  geometric: ["geometric", "grid", "modular", "sharp", "angular"],
-  warm: ["warm", "sunset", "gold", "amber", "cozy"],
-  cool: ["cool", "ice", "icy", "blue", "teal", "calm"],
-};
-
 function normalize(text: string | null | undefined): string {
   return (text ?? "").toLowerCase();
 }
 
-export function computeStyleProfile(inputs: StyleAnalysisInput[]): StyleProfileComputationResult {
+export function computeStyleProfile(
+  inputs: StyleAnalysisInput[],
+  options?: { lexicon?: StyleLexicon }
+): StyleProfileComputationResult {
+  const lexicon = getEffectiveStyleLexicon(options?.lexicon);
+
   const styleCounts: Record<string, number> = {};
-  for (const key of Object.keys(STYLE_LEXICON)) {
+  for (const key of Object.keys(lexicon)) {
     styleCounts[key] = 0;
   }
 
@@ -72,7 +62,7 @@ export function computeStyleProfile(inputs: StyleAnalysisInput[]): StyleProfileC
 
     if (!combined) continue;
 
-    for (const [style, keywords] of Object.entries(STYLE_LEXICON)) {
+    for (const [style, keywords] of Object.entries(lexicon)) {
       for (const kw of keywords) {
         if (combined.includes(kw)) {
           styleCounts[style] = (styleCounts[style] ?? 0) + 1;
@@ -154,18 +144,21 @@ export function evaluateProposalStyle(input: {
   proposal: StyleAnalysisInput;
   styleProfile: StyleProfile;
   repeatedTitles?: string[];
+  lexicon?: StyleLexicon;
 }): ProposalStyleEvaluation {
+  const lexicon = getEffectiveStyleLexicon(input.lexicon);
+
   const title = normalize(input.proposal.title);
   const summary = normalize(input.proposal.summary);
   const body = normalize(input.proposal.text);
   const combined = [title, summary, body].filter(Boolean).join(" ");
 
   const perProposalCounts: Record<string, number> = {};
-  for (const key of Object.keys(STYLE_LEXICON)) {
+  for (const key of Object.keys(lexicon)) {
     perProposalCounts[key] = 0;
   }
   if (combined) {
-    for (const [style, keywords] of Object.entries(STYLE_LEXICON)) {
+    for (const [style, keywords] of Object.entries(lexicon)) {
       for (const kw of keywords) {
         if (combined.includes(kw)) {
           perProposalCounts[style] = (perProposalCounts[style] ?? 0) + 1;

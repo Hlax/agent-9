@@ -20,6 +20,16 @@ export interface ProposalInspectionData {
   style_fit: string;
   style_novelty: string;
   style_fit_reason: string;
+  relationship_kind: string | null;
+  relationship_ref_proposal_id: string | null;
+  relationship_reason: string | null;
+  concept_family_id: string | null;
+  concept_family_member_count: number;
+  concept_family_is_representative: boolean;
+  concept_family_is_contested: boolean;
+  concept_family_needs_consolidation: boolean;
+  concept_family_recommendation: string | null;
+  concept_family_recommendation_reason: string | null;
 }
 
 function laneExplanation(lane: string): string {
@@ -177,6 +187,85 @@ export function ProposalInspectionClient({
         {proposal.style_fit_reason && (
           <p style={{ margin: "0.35rem 0 0", fontSize: "0.8rem", color: "#555" }}>{proposal.style_fit_reason}</p>
         )}
+      </section>
+
+      {/* Relationship to recent proposals */}
+      <section style={{ marginBottom: "1rem" }}>
+        <h2 style={{ fontSize: "1rem", margin: "0 0 0.35rem" }}>Relationship to recent proposals</h2>
+        <p style={{ margin: 0, fontSize: "0.85rem", color: "#555" }}>
+          Lightweight, heuristic classification vs. recent proposals in the same lane/role/target surface. This is
+          advisory only and does not change governance or state transitions.
+        </p>
+        <ul style={{ listStyle: "none", padding: 0, margin: "0.5rem 0 0", fontSize: "0.85rem", color: "#444" }}>
+          <li>
+            <span style={{ fontWeight: 600 }}>Relationship:</span>{" "}
+            {proposal.relationship_kind ?? "unclassified"}
+          </li>
+          {proposal.relationship_ref_proposal_id && (
+            <li>
+              <span style={{ fontWeight: 600 }}>Compared to proposal:</span>{" "}
+              <Link href={`/review/proposals/${proposal.relationship_ref_proposal_id}`} style={{ color: "#06c" }}>
+                {proposal.relationship_ref_proposal_id}
+              </Link>
+            </li>
+          )}
+        </ul>
+        {proposal.relationship_reason && (
+          <p style={{ margin: "0.35rem 0 0", fontSize: "0.8rem", color: "#555" }}>
+            {proposal.relationship_reason}
+          </p>
+        )}
+      </section>
+
+      {/* Concept family (advisory) */}
+      <section style={{ marginBottom: "1rem" }}>
+        <h2 style={{ fontSize: "1rem", margin: "0 0 0.35rem" }}>Concept family (advisory)</h2>
+        <p style={{ margin: 0, fontSize: "0.85rem", color: "#555" }}>
+          Lightweight grouping of related proposals into evolving lines of work. This is advisory only and does not
+          change proposal states.
+        </p>
+        <ul style={{ listStyle: "none", padding: 0, margin: "0.5rem 0 0", fontSize: "0.85rem", color: "#444" }}>
+          <li>
+            <span style={{ fontWeight: 600 }}>Family ID:</span>{" "}
+            {proposal.concept_family_id ?? "none detected in recent window"}
+          </li>
+          {proposal.concept_family_id && (
+            <>
+              <li>
+                <span style={{ fontWeight: 600 }}>Family size:</span>{" "}
+                {proposal.concept_family_member_count}
+              </li>
+              <li>
+                <span style={{ fontWeight: 600 }}>Editorial recommendation:</span>{" "}
+                {proposal.concept_family_recommendation ?? "—"}
+              </li>
+              <li>
+                <span style={{ fontWeight: 600 }}>This proposal:</span>{" "}
+                {proposal.concept_family_is_representative
+                  ? "Representative for this family"
+                  : "Non-representative member"}
+              </li>
+              <li>
+                <span style={{ fontWeight: 600 }}>Family posture:</span>{" "}
+                {proposal.concept_family_needs_consolidation
+                  ? "Needs consolidation"
+                  : "Does not currently need consolidation"}
+              </li>
+              {proposal.concept_family_is_contested && (
+                <li>
+                  <span style={{ fontWeight: 600 }}>Representative status:</span>{" "}
+                  Contested (multiple plausible heads in this family)
+                </li>
+              )}
+              {proposal.concept_family_recommendation_reason && (
+                <li>
+                  <span style={{ fontWeight: 600 }}>Reason:</span>{" "}
+                  {proposal.concept_family_recommendation_reason}
+                </li>
+              )}
+            </>
+          )}
+        </ul>
       </section>
 
       {/* Payload preview */}

@@ -141,6 +141,9 @@ export default async function RuntimeDebugPage() {
               {JSON.stringify(
                 {
                   runtime: state.runtime,
+                  relationship_summary: (state as Record<string, unknown>).relationship_summary,
+                  concept_family_summary: (state as Record<string, unknown>).concept_family_summary,
+                  trajectory: (state as Record<string, unknown>).trajectory,
                   creative_state: state.creative_state,
                   active_project: state.active_project,
                   active_thread: state.active_thread,

@@ -8,6 +8,14 @@ import { getRuntimeConfig, getSessionsRunInLastHour } from "@/lib/runtime-config
 import { getSynthesisPressure, computeSynthesisPressure } from "@/lib/synthesis-pressure";
 import { buildContinuityRows, buildContinuityAggregate } from "@/lib/runtime-continuity";
 import { computeStyleProfile, type StyleAnalysisInput } from "@/lib/style-profile";
+import { PLATFORM_DEFAULT_TWIN_SEED } from "@/lib/twin-seed-config";
+import { deriveRuntimeTrajectory, type RuntimeRelationshipSummary } from "@/lib/runtime-trajectory";
+import {
+  evaluateProposalRelationship,
+  type ProposalForRelationship,
+  type ProposalRelationshipKind,
+} from "@/lib/proposal-relationship";
+import { buildConceptFamilies, type ConceptFamilyRuntimeSummary } from "@/lib/proposal-families";
 
 export async function getRuntimeStatePayload(supabase: SupabaseClient | null) {
   if (!supabase) {
@@ -33,11 +41,21 @@ export async function getRuntimeStatePayload(supabase: SupabaseClient | null) {
       active_project: null,
       active_thread: null,
       synthesis_pressure: emptySynthesisPressure,
+      trajectory: deriveRuntimeTrajectory({
+        seed: PLATFORM_DEFAULT_TWIN_SEED,
+        styleProfile: { dominant: [], emerging: [], suppressed: [], pressure: "coherent" },
+        stylePressureExplanation: "Runtime offline; no style signals available.",
+        repeatedTitles: [],
+        backlogArtifacts: { total: 0, reviewable: 0, approval_candidates: 0 },
+        synthesisPressure: emptySynthesisPressure,
+      }),
+      seed_config: PLATFORM_DEFAULT_TWIN_SEED,
     };
   }
 
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
   const styleWindowSize = 40;
+  const relationshipWindowSize = 40;
 
   const [
     stateRes,
@@ -51,6 +69,7 @@ export async function getRuntimeStatePayload(supabase: SupabaseClient | null) {
     latestSessionRes,
     synthesisPressurePayload,
     sessionsLastHour,
+    recentProposalsRes,
   ] =
     await Promise.all([
       supabase
@@ -92,6 +111,13 @@ export async function getRuntimeStatePayload(supabase: SupabaseClient | null) {
         .maybeSingle(),
       getSynthesisPressure(supabase),
       getSessionsRunInLastHour(supabase),
+      supabase
+        .from("proposal_record")
+        .select(
+          "proposal_record_id, title, summary, habitat_payload_json, target_surface, proposal_role, target_type, lane_type, created_at"
+        )
+        .order("created_at", { ascending: false })
+        .limit(relationshipWindowSize),
     ]);
 
   const { data: snapshot, error: stateError } = stateRes;
@@ -204,6 +230,119 @@ export async function getRuntimeStatePayload(supabase: SupabaseClient | null) {
     last_run_at: runtimeConfig.last_run_at,
   };
 
+  const recentProposals = (recentProposalsRes.data ?? []) as Array<{
+    proposal_record_id: string;
+    title: string | null;
+    summary: string | null;
+    habitat_payload_json: unknown;
+    target_surface: string | null;
+    proposal_role: string | null;
+    target_type: string | null;
+    lane_type: string | null;
+    created_at: string | null;
+  }>;
+
+  let relationship_summary: RuntimeRelationshipSummary = {
+    duplicates_recent: 0,
+    refinements_recent: 0,
+    alternatives_recent: 0,
+    successors_recent: 0,
+    unrelated_recent: 0,
+    dominant_relationship_pattern: null,
+  };
+
+  let concept_family_summary: ConceptFamilyRuntimeSummary = {
+    family_count_recent: 0,
+    largest_family_size: 0,
+    families_with_successors: 0,
+    families_with_many_alternatives: 0,
+    families_with_duplicate_pressure: 0,
+    families_needing_consolidation: 0,
+    families_with_contested_representatives: 0,
+    families_with_clear_heads: 0,
+    families_recommended_for_reinforcement: 0,
+    families_recommended_for_consolidation: 0,
+    families_recommended_for_human_selection: 0,
+    families_holding_multiple_branches: 0,
+    stable_families: 0,
+  };
+
+  if (recentProposals.length > 0) {
+    const relInputs: ProposalForRelationship[] = recentProposals.map((p) => ({
+      id: p.proposal_record_id,
+      title: p.title ?? "",
+      summary: p.summary ?? null,
+      payloadText:
+        p.habitat_payload_json && typeof p.habitat_payload_json === "object"
+          ? JSON.stringify(p.habitat_payload_json).slice(0, 800)
+          : null,
+      targetSurface: p.target_surface ?? null,
+      proposalRole: p.proposal_role ?? null,
+      targetType: p.target_type ?? null,
+      laneType: p.lane_type ?? "surface",
+      createdAt: p.created_at ?? null,
+    }));
+
+    const counts: Record<ProposalRelationshipKind, number> = {
+      duplicate: 0,
+      refinement: 0,
+      alternative: 0,
+      successor: 0,
+      unrelated: 0,
+    };
+
+    for (const current of relInputs) {
+      const rel = evaluateProposalRelationship(current, relInputs);
+      counts[rel.kind] = (counts[rel.kind] ?? 0) + 1;
+    }
+
+    const total =
+      counts.duplicate + counts.refinement + counts.alternative + counts.successor + counts.unrelated;
+
+    let dominant: string | null = null;
+    if (total > 0) {
+      const entries = Object.entries(counts) as [ProposalRelationshipKind, number][];
+      const [kind, value] = entries.reduce(
+        (best, cur) => (cur[1] > best[1] ? cur : best),
+        ["unrelated", 0] as [ProposalRelationshipKind, number]
+      );
+      if (value / total >= 0.4) {
+        dominant = kind;
+      }
+    }
+
+    relationship_summary = {
+      duplicates_recent: counts.duplicate,
+      refinements_recent: counts.refinement,
+      alternatives_recent: counts.alternative,
+      successors_recent: counts.successor,
+      unrelated_recent: counts.unrelated,
+      dominant_relationship_pattern: dominant,
+    };
+
+    // Build concept families and derive runtime summary (advisory only).
+    const { summary: familySummary } = buildConceptFamilies(relInputs, (current, all) => {
+      const rel = evaluateProposalRelationship(current, all);
+      return { kind: rel.kind, relatedProposalId: rel.relatedProposalId };
+    });
+    concept_family_summary = familySummary;
+  }
+
+  const trajectory = deriveRuntimeTrajectory({
+    seed: PLATFORM_DEFAULT_TWIN_SEED,
+    styleProfile: style_profile,
+    stylePressureExplanation: style_profile_pressure_explanation,
+    repeatedTitles: style_profile_repeated_titles,
+    backlogArtifacts: {
+      total: artifactRows.length,
+      reviewable: artifact_breakdown.reviewable,
+      approval_candidates: artifact_breakdown.approval_candidates,
+    },
+    synthesisPressure: synthesisPressurePayload,
+    relationshipSummary: relationship_summary,
+    conceptFamilySummary: concept_family_summary,
+  });
+
   return {
     snapshot: stateError || !snapshot ? null : snapshot,
     backlog: { artifacts: artifactBacklog, proposals: proposalBacklog },
@@ -218,6 +357,10 @@ export async function getRuntimeStatePayload(supabase: SupabaseClient | null) {
     active_project,
     active_thread,
     synthesis_pressure: synthesisPressurePayload,
+    relationship_summary,
+    concept_family_summary,
+    trajectory,
+    seed_config: PLATFORM_DEFAULT_TWIN_SEED,
   };
 }
 
