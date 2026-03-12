@@ -127,13 +127,13 @@ export function getIntervalMs(mode: RuntimeMode): number {
     case "slow":
       return 30 * 60 * 1000; // 30 min
     case "default":
-      return 60 * 60 * 1000; // 1 hr
+      return 60 * 1000; // 1 min
     case "steady":
       return 5 * 60 * 1000; // 5 min
     case "turbo":
       // Under 1 min so cron firing every minute usually runs (avoids skip when last run was ~45s ago).
       return 45 * 1000; // 45 s
     default:
-      return 60 * 60 * 1000;
+      return 60 * 1000; // 1 min
   }
 }

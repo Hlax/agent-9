@@ -134,7 +134,7 @@ For each audit section: exact files changed, runtime path that satisfies the req
 - **GET** `/api/runtime/config`: returns `mode`, `always_on`, `last_run_at`.
 - **PATCH** `/api/runtime/config`: body `{ mode?, always_on? }`, auth required; updates `runtime_config`.
 - **POST** `/api/session/run`: if header `x-cron-secret` matches `CRON_SECRET`, treated as authorized (no user required), runs as “harvey”.
-- Intervals: slow 30 min, default 1 hr, steady 5 min, turbo 1 min.
+- Intervals: slow 30 min, default 1 min, steady 5 min, turbo 45 s.
 
 ### Full vs partial
 - **Full:** Mode and always-on are stored and read; cron can trigger sessions at mode-defined intervals; Studio UI shows and updates mode and always-on.
