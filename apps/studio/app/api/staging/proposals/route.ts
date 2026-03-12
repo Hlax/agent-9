@@ -95,13 +95,35 @@ export async function GET() {
     });
 
     const scored = proposals.map((p, idx) => {
-      const text = relInputs[idx].payloadText;
+      const relInput = relInputs[idx];
+      if (!relInput) {
+        const evalResult = evaluateProposalStyle({
+          proposal: { title: p.title ?? "", summary: p.summary ?? null, text: null },
+          styleProfile: profile,
+          repeatedTitles,
+        });
+        return {
+          ...p,
+          ...evalResult,
+          relationship_kind: "unrelated",
+          relationship_ref_proposal_id: null,
+          relationship_reason: "No relationship data available for this proposal in staging window.",
+          concept_family_id: null,
+          concept_family_member_count: 0,
+          concept_family_is_representative: false,
+          concept_family_is_contested: false,
+          concept_family_needs_consolidation: false,
+          concept_family_recommendation: null,
+          concept_family_recommendation_reason: null,
+        };
+      }
+      const text = relInput?.payloadText ?? null;
       const evalResult = evaluateProposalStyle({
         proposal: { title: p.title ?? "", summary: p.summary ?? null, text },
         styleProfile: profile,
         repeatedTitles,
       });
-      const relationship = evaluateProposalRelationship(relInputs[idx], relInputs);
+      const relationship = evaluateProposalRelationship(relInput, relInputs);
       const family = families.find((f) => f.member_ids.includes(p.proposal_record_id));
       return {
         ...p,
