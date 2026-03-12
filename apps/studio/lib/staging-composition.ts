@@ -130,19 +130,29 @@ export async function promoteStagingToPublic(
 
   // Advance source proposals to 'published'. Collect unique non-null proposal IDs
   // from staging rows, then bulk-update only those in promotable states.
+  // The update and count are split into two queries: Supabase does not reliably
+  // return a row-count when chaining .select() after .update().in().in().
   const sourceProposalIds = [
     ...new Set(rows.map((r) => r.source_proposal_id).filter((id): id is string => !!id)),
   ];
   let proposalsPublished = 0;
   if (sourceProposalIds.length > 0) {
-    const { count, error: updateErr } = await supabase
+    const { error: updateErr } = await supabase
       .from("proposal_record")
       .update({ proposal_state: "published", updated_at: now })
       .in("proposal_record_id", sourceProposalIds)
-      .in("proposal_state", PROMOTABLE_PROPOSAL_STATES)
-      .select("proposal_record_id", { count: "exact", head: true });
+      .in("proposal_state", PROMOTABLE_PROPOSAL_STATES);
+
     if (!updateErr) {
-      proposalsPublished = count ?? 0;
+      const { count, error: countErr } = await supabase
+        .from("proposal_record")
+        .select("proposal_record_id", { count: "exact", head: true })
+        .in("proposal_record_id", sourceProposalIds)
+        .eq("proposal_state", "published");
+
+      if (!countErr) {
+        proposalsPublished = count ?? 0;
+      }
     }
     // Non-fatal: if updating proposal states fails we still record the promotion.
   }

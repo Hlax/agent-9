@@ -222,9 +222,9 @@ import { promoteStagingToPublic } from "../staging-composition";
 
 /**
  * Build a minimal Supabase mock for promoteStagingToPublic tests.
- * Each call to `from(table)` returns a chain object keyed by the expected
- * operation order for that table. Use the factory to override individual
- * steps per test.
+ * The proposal_record table is called twice: once for update, once for the
+ * post-update count query. The mock tracks call order on `from("proposal_record")`
+ * to return the correct chain for each call.
  */
 function buildPromoteMock({
   stagingRows = [
@@ -237,15 +237,23 @@ function buildPromoteMock({
   promotionInsertError = null as null | { message: string },
   promotionId = "promo-1",
 } = {}) {
+  // Update chain: .update().in().in() → { error }
   const mockProposalUpdate = vi.fn(() => ({
     in: vi.fn(() => ({
-      in: vi.fn(() => ({
-        select: vi.fn(() =>
-          Promise.resolve({ count: proposalUpdateCount, error: proposalUpdateError })
-        ),
-      })),
+      in: vi.fn(() => Promise.resolve({ error: proposalUpdateError })),
     })),
   }));
+
+  // Count chain: .select(..., {count, head}).in().eq() → { count, error }
+  const mockProposalSelect = vi.fn(() => ({
+    in: vi.fn(() => ({
+      eq: vi.fn(() => Promise.resolve({ count: proposalUpdateCount, error: null })),
+    })),
+  }));
+
+  // Track how many times proposal_record has been called to alternate between
+  // the update chain and the count chain.
+  let proposalCallCount = 0;
 
   const mockPublicUpsert = vi.fn(() => Promise.resolve({ error: publicUpsertError }));
   const mockPromoInsert = vi.fn(() => ({
@@ -265,7 +273,11 @@ function buildPromoteMock({
         return { upsert: mockPublicUpsert };
       }
       if (table === "proposal_record") {
-        return { update: mockProposalUpdate };
+        proposalCallCount += 1;
+        // First call is the update; second call is the count query.
+        return proposalCallCount === 1
+          ? { update: mockProposalUpdate }
+          : { select: mockProposalSelect };
       }
       if (table === "habitat_promotion_record") {
         return { insert: mockPromoInsert };
@@ -274,7 +286,7 @@ function buildPromoteMock({
     }),
   } as unknown as import("@supabase/supabase-js").SupabaseClient;
 
-  return { supabase, mockPublicUpsert, mockProposalUpdate, mockPromoInsert };
+  return { supabase, mockPublicUpsert, mockProposalUpdate, mockProposalSelect, mockPromoInsert };
 }
 
 describe("promoteStagingToPublic", () => {
