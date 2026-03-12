@@ -11,7 +11,7 @@ This document describes how the **actual** codebase implements "creative metabol
 - **RuntimeMode**: `"slow"` | `"default"` | `"steady"` | `"turbo"`.
 - **Effect**: Cron uses `getIntervalMs(mode)` to enforce minimum time between session runs:
   - **slow**: 30 minutes
-  - **default**: 1 hour
+  - **default**: 1 minute
   - **steady**: 5 minutes
   - **turbo**: 45 seconds
 
