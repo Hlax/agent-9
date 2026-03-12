@@ -60,10 +60,12 @@ export async function POST(request: Request) {
       preferMedium,
     });
 
-    // Update last_run_at so the cron interval guard accounts for manual session runs.
-    const serviceSupabase = getSupabaseServer();
-    if (serviceSupabase) {
-      await setLastRunAt(serviceSupabase, new Date().toISOString());
+    // Only advance last_run_at for cron-triggered runs so manual sessions don't throttle the scheduler.
+    if (isCron) {
+      const serviceSupabase = getSupabaseServer();
+      if (serviceSupabase) {
+        await setLastRunAt(serviceSupabase, new Date().toISOString());
+      }
     }
 
     return NextResponse.json(payload);
