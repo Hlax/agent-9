@@ -16,6 +16,10 @@ export interface ProposalInspectionData {
   target_surface: string | null;
   summary: string | null;
   habitat_payload_json: unknown;
+  style_tags: string[];
+  style_fit: string;
+  style_novelty: string;
+  style_fit_reason: string;
 }
 
 function laneExplanation(lane: string): string {
@@ -149,6 +153,29 @@ export function ProposalInspectionClient({
           </p>
         ) : (
           <p style={{ margin: 0, fontSize: "0.9rem", color: "#666" }}>—</p>
+        )}
+      </section>
+
+      {/* Style evaluation */}
+      <section style={{ marginBottom: "1rem" }}>
+        <h2 style={{ fontSize: "1rem", margin: "0 0 0.35rem" }}>Style evaluation (advisory)</h2>
+        <p style={{ margin: 0, fontSize: "0.85rem", color: "#555" }}>
+          This is a soft style signal based on recent artifacts and proposals. It does not override governance rules.
+        </p>
+        <ul style={{ listStyle: "none", padding: 0, margin: "0.5rem 0 0", fontSize: "0.85rem", color: "#444" }}>
+          <li>
+            <span style={{ fontWeight: 600 }}>Style tags:</span>{" "}
+            {proposal.style_tags && proposal.style_tags.length > 0 ? proposal.style_tags.join(", ") : "none detected"}
+          </li>
+          <li>
+            <span style={{ fontWeight: 600 }}>Fit vs current profile:</span> {proposal.style_fit}
+          </li>
+          <li>
+            <span style={{ fontWeight: 600 }}>Novelty:</span> {proposal.style_novelty}
+          </li>
+        </ul>
+        {proposal.style_fit_reason && (
+          <p style={{ margin: "0.35rem 0 0", fontSize: "0.8rem", color: "#555" }}>{proposal.style_fit_reason}</p>
         )}
       </section>
 

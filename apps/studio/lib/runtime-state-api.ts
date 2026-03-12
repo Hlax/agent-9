@@ -7,6 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getRuntimeConfig, getSessionsRunInLastHour } from "@/lib/runtime-config";
 import { getSynthesisPressure, computeSynthesisPressure } from "@/lib/synthesis-pressure";
 import { buildContinuityRows, buildContinuityAggregate } from "@/lib/runtime-continuity";
+import { computeStyleProfile, type StyleAnalysisInput } from "@/lib/style-profile";
 
 export async function getRuntimeStatePayload(supabase: SupabaseClient | null) {
   if (!supabase) {
@@ -23,6 +24,9 @@ export async function getRuntimeStatePayload(supabase: SupabaseClient | null) {
       backlog: { artifacts: {} as Record<string, number>, proposals: {} as Record<string, number> },
       artifact_breakdown: { total: 0, internal: 0, reviewable: 0, approval_candidates: 0 },
       artifact_breakdown_hour: { sessions: 0, total: 0, internal: 0, reviewable: 0, approval_candidates: 0 },
+      style_profile: { dominant: [], emerging: [], suppressed: [], pressure: "coherent" as const },
+      style_profile_pressure_explanation: "Runtime offline; no style signals available.",
+      style_profile_repeated_titles: [] as string[],
       runtime: { mode: "default", always_on: false, tokens_used_today: 0, last_run_at: null },
       return_candidates: 0,
       creative_state: null,
@@ -33,8 +37,21 @@ export async function getRuntimeStatePayload(supabase: SupabaseClient | null) {
   }
 
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const styleWindowSize = 40;
 
-  const [stateRes, artifactBacklogRes, artifactHourRes, proposalBacklogRes, archiveCountRes, runtimeConfig, latestSessionRes, synthesisPressurePayload, sessionsLastHour] =
+  const [
+    stateRes,
+    artifactBacklogRes,
+    artifactHourRes,
+    proposalBacklogRes,
+    styleArtifactsRes,
+    styleProposalsRes,
+    archiveCountRes,
+    runtimeConfig,
+    latestSessionRes,
+    synthesisPressurePayload,
+    sessionsLastHour,
+  ] =
     await Promise.all([
       supabase
         .from("creative_state_snapshot")
@@ -55,6 +72,16 @@ export async function getRuntimeStatePayload(supabase: SupabaseClient | null) {
           count: "exact",
           head: false,
         }),
+      supabase
+        .from("artifact")
+        .select("title, summary, content_text")
+        .order("created_at", { ascending: false })
+        .limit(styleWindowSize),
+      supabase
+        .from("proposal_record")
+        .select("title, summary")
+        .order("created_at", { ascending: false })
+        .limit(styleWindowSize),
       supabase.from("archive_entry").select("archive_entry_id", { count: "exact", head: true }),
       getRuntimeConfig(supabase),
       supabase
@@ -111,6 +138,34 @@ export async function getRuntimeStatePayload(supabase: SupabaseClient | null) {
     ).length,
   };
 
+  const styleInputs: StyleAnalysisInput[] = [];
+  for (const a of (styleArtifactsRes.data ?? []) as Array<{
+    title?: string | null;
+    summary?: string | null;
+    content_text?: string | null;
+  }>) {
+    styleInputs.push({
+      title: a.title ?? null,
+      summary: a.summary ?? null,
+      text: a.content_text ?? null,
+    });
+  }
+  for (const p of (styleProposalsRes.data ?? []) as Array<{
+    title?: string | null;
+    summary?: string | null;
+  }>) {
+    styleInputs.push({
+      title: p.title ?? null,
+      summary: p.summary ?? null,
+      text: null,
+    });
+  }
+  const {
+    profile: style_profile,
+    pressureExplanation: style_profile_pressure_explanation,
+    repeatedTitles: style_profile_repeated_titles,
+  } = computeStyleProfile(styleInputs);
+
   const proposalBacklog =
     proposalBacklogRes.data?.reduce(
       (acc: Record<string, number>, row: Record<string, unknown>) => {
@@ -154,6 +209,9 @@ export async function getRuntimeStatePayload(supabase: SupabaseClient | null) {
     backlog: { artifacts: artifactBacklog, proposals: proposalBacklog },
     artifact_breakdown,
     artifact_breakdown_hour,
+    style_profile,
+    style_profile_pressure_explanation,
+    style_profile_repeated_titles,
     runtime,
     return_candidates: returnCandidatesCount,
     creative_state,

@@ -26,6 +26,7 @@ import type { BrainContextResult } from "@/lib/brain-context";
 import { getLatestCreativeState } from "@/lib/creative-state-load";
 import { computePublicCurationBacklog } from "@/lib/curation-backlog";
 import { getBrainContext, buildIdentityVoiceContext } from "@/lib/brain-context";
+import { computeStyleProfile, type StyleAnalysisInput } from "@/lib/style-profile";
 import { isProposalEligible } from "@/lib/proposal-eligibility";
 import {
   buildMinimalHabitatPayloadFromConcept,
@@ -572,7 +573,7 @@ async function buildContexts(state: SessionExecutionState): Promise<SessionExecu
   const brainContext = await getBrainContext(state.supabase, {
     project_id: state.selectedProjectId ?? null,
   });
-  const workingContext = buildIdentityVoiceContext(brainContext);
+  let workingContext = buildIdentityVoiceContext(brainContext);
   let sourceContext = brainContext.sourceSummary ?? "";
   if (
     state.supabase &&
@@ -588,6 +589,82 @@ async function buildContexts(state: SessionExecutionState): Promise<SessionExecu
       sourceContext = [sourceContext, focusContext].filter(Boolean).join("\n\n");
     }
   }
+
+  if (state.supabase) {
+    const styleWindowSize = 40;
+    const [styleArtifactsRes, styleProposalsRes] = await Promise.all([
+      state.supabase
+        .from("artifact")
+        .select("title, summary, content_text")
+        .order("created_at", { ascending: false })
+        .limit(styleWindowSize),
+      state.supabase
+        .from("proposal_record")
+        .select("title, summary")
+        .order("created_at", { ascending: false })
+        .limit(styleWindowSize),
+    ]);
+    const styleInputs: StyleAnalysisInput[] = [];
+    for (const a of (styleArtifactsRes.data ?? []) as Array<{
+      title?: string | null;
+      summary?: string | null;
+      content_text?: string | null;
+    }>) {
+      styleInputs.push({
+        title: a.title ?? null,
+        summary: a.summary ?? null,
+        text: a.content_text ?? null,
+      });
+    }
+    for (const p of (styleProposalsRes.data ?? []) as Array<{
+      title?: string | null;
+      summary?: string | null;
+    }>) {
+      styleInputs.push({
+        title: p.title ?? null,
+        summary: p.summary ?? null,
+        text: null,
+      });
+    }
+    const {
+      profile,
+      pressureExplanation,
+      repeatedTitles,
+    } = computeStyleProfile(styleInputs);
+    if (
+      profile.dominant.length > 0 ||
+      profile.emerging.length > 0 ||
+      profile.suppressed.length > 0 ||
+      repeatedTitles.length > 0
+    ) {
+      const lines: string[] = [];
+      lines.push("Recent aesthetic style tendencies (soft guidance, not a hard rule):");
+      if (profile.dominant.length > 0) {
+        lines.push(`- Dominant styles: ${profile.dominant.join(", ")}.`);
+      }
+      if (profile.emerging.length > 0) {
+        lines.push(`- Emerging styles to explore: ${profile.emerging.join(", ")}.`);
+      }
+      if (profile.suppressed.length > 0) {
+        lines.push(`- Suppressed styles: ${profile.suppressed.join(", ")}.`);
+      }
+      lines.push(`- Style pressure: ${profile.pressure} (${pressureExplanation}).`);
+      if (repeatedTitles.length > 0) {
+        lines.push(
+          `- Avoid reusing exact recent titles or phrases such as: ${repeatedTitles
+            .slice(0, 3)
+            .map((t) => `"${t}"`)
+            .join(", ")}.`
+        );
+      }
+      lines.push(
+        "When framing new concepts or proposals, gently favor dominant styles, give emerging styles a small exploration bonus, and avoid copy-pasting titles verbatim."
+      );
+      const styleBlock = lines.join("\n");
+      workingContext = [workingContext, styleBlock].filter(Boolean).join("\n\n");
+    }
+  }
+
   return { ...state, brainContext, workingContext, sourceContext };
 }
 

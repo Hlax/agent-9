@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getSupabaseServer } from "@/lib/supabase-server";
+import { computeStyleProfile, evaluateProposalStyle, type StyleAnalysisInput } from "@/lib/style-profile";
 import { ProposalInspectionClient, type ProposalInspectionData } from "./proposal-inspection-client";
 
 export default async function ProposalInspectionPage({
@@ -30,6 +31,57 @@ export default async function ProposalInspectionPage({
     sourceConceptTitle = art?.title ?? null;
   }
 
+  const styleWindowSize = 40;
+  const [artifactRes, proposalRes] = await Promise.all([
+    supabase
+      .from("artifact")
+      .select("title, summary, content_text")
+      .order("created_at", { ascending: false })
+      .limit(styleWindowSize),
+    supabase
+      .from("proposal_record")
+      .select("title, summary")
+      .order("created_at", { ascending: false })
+      .limit(styleWindowSize),
+  ]);
+
+  const styleInputs: StyleAnalysisInput[] = [];
+  for (const a of (artifactRes.data ?? []) as Array<{
+    title?: string | null;
+    summary?: string | null;
+    content_text?: string | null;
+  }>) {
+    styleInputs.push({
+      title: a.title ?? null,
+      summary: a.summary ?? null,
+      text: a.content_text ?? null,
+    });
+  }
+  for (const p of (proposalRes.data ?? []) as Array<{
+    title?: string | null;
+    summary?: string | null;
+  }>) {
+    styleInputs.push({
+      title: p.title ?? null,
+      summary: p.summary ?? null,
+      text: null,
+    });
+  }
+  const { profile: styleProfile, repeatedTitles } = computeStyleProfile(styleInputs);
+  const proposalText =
+    proposal.habitat_payload_json && typeof proposal.habitat_payload_json === "object"
+      ? JSON.stringify(proposal.habitat_payload_json).slice(0, 800)
+      : null;
+  const styleEval = evaluateProposalStyle({
+    proposal: {
+      title: proposal.title ?? "",
+      summary: proposal.summary ?? null,
+      text: proposalText,
+    },
+    styleProfile,
+    repeatedTitles,
+  });
+
   const inspectionData: ProposalInspectionData = {
     proposal_record_id: proposal.proposal_record_id,
     title: proposal.title ?? "",
@@ -42,6 +94,10 @@ export default async function ProposalInspectionPage({
     target_surface: proposal.target_surface ?? null,
     summary: proposal.summary ?? null,
     habitat_payload_json: proposal.habitat_payload_json ?? null,
+    style_tags: styleEval.style_tags,
+    style_fit: styleEval.style_fit,
+    style_novelty: styleEval.style_novelty,
+    style_fit_reason: styleEval.style_fit_reason,
   };
 
   return (

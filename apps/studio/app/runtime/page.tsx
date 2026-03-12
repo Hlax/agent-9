@@ -151,6 +151,52 @@ export default async function RuntimeDebugPage() {
               )}
             </pre>
           </section>
+          <section
+            style={{
+              marginTop: "1.5rem",
+              border: "1px solid #ddd",
+              borderRadius: 8,
+              padding: "1rem",
+              background: "#fafafa",
+            }}
+          >
+            <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Style profile</h2>
+            <p style={{ fontSize: "0.85rem", color: "#555", margin: "0 0 0.5rem" }}>
+              Derived from recent artifact and proposal titles/summaries using a small lexical style lexicon.
+            </p>
+            {(() => {
+              const styleProfile = (state as Record<string, { dominant: string[]; emerging: string[]; suppressed: string[]; pressure: string } | undefined>).style_profile;
+              const pressureExplanation = (state as Record<string, string | undefined>).style_profile_pressure_explanation;
+              const repeated = (state as Record<string, string[] | undefined>).style_profile_repeated_titles;
+              if (!styleProfile) return null;
+              return (
+                <div style={{ fontSize: "0.9rem" }}>
+                  <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                    <li><strong>Dominant:</strong> {styleProfile.dominant.length > 0 ? styleProfile.dominant.join(", ") : "—"}</li>
+                    <li><strong>Emerging:</strong> {styleProfile.emerging.length > 0 ? styleProfile.emerging.join(", ") : "—"}</li>
+                    <li><strong>Suppressed:</strong> {styleProfile.suppressed.length > 0 ? styleProfile.suppressed.join(", ") : "—"}</li>
+                    <li><strong>Pressure:</strong> {styleProfile.pressure}</li>
+                  </ul>
+                  {pressureExplanation && (
+                    <p style={{ margin: "0.5rem 0 0", fontSize: "0.8rem", color: "#555" }}>
+                      {pressureExplanation}
+                    </p>
+                  )}
+                  {repeated && repeated.length > 0 && (
+                    <p style={{ margin: "0.35rem 0 0", fontSize: "0.8rem", color: "#555" }}>
+                      Repeated recent titles (soft penalty):{" "}
+                      {repeated.slice(0, 5).map((t, idx) => (
+                        <span key={idx}>
+                          {idx > 0 ? ", " : ""}
+                          “{t}”
+                        </span>
+                      ))}
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
+          </section>
         </>
       )}
 
