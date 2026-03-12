@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isLegalProposalStateTransition } from "../governance-rules";
+import { isLegalProposalStateTransition, getNextLegalProposalActions } from "../governance-rules";
 
 describe("isLegalProposalStateTransition", () => {
   describe("pending_review happy paths", () => {
@@ -118,5 +118,24 @@ describe("isLegalProposalStateTransition", () => {
     it("blocks unknown target state from valid current", () => {
       expect(isLegalProposalStateTransition("pending_review", "unknown_state")).toBe(false);
     });
+  });
+});
+
+describe("getNextLegalProposalActions", () => {
+  it("returns next states for pending_review", () => {
+    expect(getNextLegalProposalActions("pending_review")).toEqual([
+      "needs_revision", "approved_for_staging", "archived", "rejected", "ignored",
+    ]);
+  });
+  it("returns next states for approved_for_staging", () => {
+    expect(getNextLegalProposalActions("approved_for_staging")).toEqual([
+      "staged", "approved_for_publication", "archived", "rejected",
+    ]);
+  });
+  it("returns empty for terminal published", () => {
+    expect(getNextLegalProposalActions("published")).toEqual([]);
+  });
+  it("returns empty for unknown state", () => {
+    expect(getNextLegalProposalActions("unknown")).toEqual([]);
   });
 });

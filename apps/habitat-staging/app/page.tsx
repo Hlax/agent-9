@@ -10,16 +10,25 @@ type ProposalType = "layout" | "component" | "navigation" | "workflow" | "visual
 
 type ProposalStatus = "proposed" | "under_review" | "approved" | "rejected" | "implemented";
 
+interface HabitatPayloadLike {
+  page?: string;
+  blocks?: unknown[];
+  theme?: unknown;
+}
+
 interface ChangeProposal {
   id: string;
   title: string;
   target_surface: TargetSurface;
   proposal_type: ProposalType;
+  proposal_role?: string | null;
   rationale: string;
   artifact_id?: string | null;
   idea_thread_id?: string | null;
   preview_url?: string | null;
   status: ProposalStatus;
+  proposal_state?: string;
+  habitat_payload_json?: HabitatPayloadLike | null;
   created_at: string;
   updated_at: string;
 }
@@ -36,6 +45,35 @@ interface BuildState {
 }
 
 type StagingFetchResult = { proposals: ChangeProposal[]; error?: string };
+
+interface CompositionPage {
+  slug: string;
+  title: string | null;
+  body: string | null;
+  payload_json: HabitatPayloadLike | null;
+  source_proposal_id: string | null;
+  updated_at: string;
+}
+
+type CompositionFetchResult = { pages: CompositionPage[]; error?: string };
+
+async function getStagingComposition(): Promise<CompositionFetchResult> {
+  const base = process.env.NEXT_PUBLIC_STUDIO_URL ?? "";
+  const url = base ? `${base.replace(/\/$/, "")}/api/staging/composition` : "";
+  if (!url) return { pages: [] };
+  try {
+    const res = await fetch(url, { next: { revalidate: 30 } });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { pages: [], error: text ? "Studio " + res.status + ": " + text.slice(0, 80) : "Studio " + res.status };
+    }
+    const data = await res.json();
+    const list = Array.isArray(data.pages) ? data.pages : [];
+    return { pages: list };
+  } catch (e) {
+    return { pages: [], error: e instanceof Error ? e.message : "Failed to load" };
+  }
+}
 
 async function getStagingProposals(): Promise<StagingFetchResult> {
   const base = process.env.NEXT_PUBLIC_STUDIO_URL ?? "";
@@ -55,11 +93,14 @@ async function getStagingProposals(): Promise<StagingFetchResult> {
       title: String(p.title ?? ""),
       target_surface: (p.target_surface as TargetSurface) ?? "staging_habitat",
       proposal_type: (p.proposal_type as ProposalType) ?? "layout",
+      proposal_role: (p.proposal_role as string | null) ?? null,
       rationale: String(p.summary ?? ""),
       artifact_id: (p.artifact_id as string | null) ?? null,
       idea_thread_id: null,
       preview_url: (p.preview_uri as string) ?? null,
       status: mapProposalStateToStatus(String(p.proposal_state ?? "proposed")),
+      proposal_state: String(p.proposal_state ?? ""),
+      habitat_payload_json: (p.habitat_payload_json as HabitatPayloadLike | null) ?? null,
       created_at: String(p.created_at ?? ""),
       updated_at: String(p.updated_at ?? ""),
     }));
@@ -134,9 +175,12 @@ const mockBuildState: BuildState = {
 };
 
 export default async function StagingHome() {
+  const { pages: compositionPages, error: compositionError } = await getStagingComposition();
   const { proposals: realProposals, error: fetchError } = await getStagingProposals();
   const proposals = realProposals.length > 0 ? realProposals : mockProposals;
   const primaryProposal = proposals[0]!;
+  const hasComposition = compositionPages.length > 0;
+  const primaryPage = compositionPages[0];
 
   return (
     <main style={{ maxWidth: 1120, margin: "0 auto", padding: "1.5rem 1rem 2rem" }}>
@@ -145,6 +189,11 @@ export default async function StagingHome() {
         <p style={{ margin: 0, color: "#555", maxWidth: 720 }}>
           Sandbox for previewing staging-approved artifacts, UI/system experiments, and habitat changes. This surface is read-only relative to Studio and Public; Harvey approves structural changes in Studio.
         </p>
+        {hasComposition ? (
+          <p style={{ margin: "0.5rem 0 0", fontSize: "0.9rem", color: "#2a7" }}>
+            Current staging composition: {compositionPages.length} page(s). Render source: staging composition (branch head).
+          </p>
+        ) : null}
       </header>
 
       <section
@@ -157,12 +206,21 @@ export default async function StagingHome() {
       >
         <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
           <BuildStatePanel state={mockBuildState} />
-          {fetchError ? (
-            <p style={{ color: "#c00", marginBottom: "0.5rem" }}>Unable to load proposals: {fetchError}</p>
+          {compositionError ? (
+            <p style={{ color: "#c00", marginBottom: "0.5rem" }}>Composition: {compositionError}</p>
+          ) : null}
+          {fetchError && !hasComposition ? (
+            <p style={{ color: "#c00", marginBottom: "0.5rem" }}>Proposals: {fetchError}</p>
+          ) : null}
+          {hasComposition ? (
+            <StagingCompositionSection pages={compositionPages} />
           ) : null}
           <ChangeProposalsSection proposals={proposals} />
         </div>
-        <BeforeAfterPreview proposal={primaryProposal} />
+        <BeforeAfterPreview
+          proposal={primaryProposal}
+          compositionPage={primaryPage}
+        />
       </section>
     </main>
   );
@@ -201,6 +259,29 @@ function BuildStatePanel({ state }: { state: BuildState }) {
             : "Ahead of or diverged from main"}
         </dd>
       </dl>
+    </section>
+  );
+}
+
+function StagingCompositionSection({ pages }: { pages: CompositionPage[] }) {
+  return (
+    <section style={{ border: "1px solid #2a7", borderRadius: 8, padding: "0.9rem 1rem", background: "#f0f9f0" }}>
+      <h2 style={{ fontSize: "1.1rem", margin: "0 0 0.5rem" }}>Current staging composition</h2>
+      <p style={{ margin: 0, fontSize: "0.9rem", color: "#555" }}>
+        Rendered from staging composition (branch head). Each page merged from an approved proposal.
+      </p>
+      <ul style={{ listStyle: "none", padding: 0, marginTop: "0.5rem", display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+        {pages.map((p) => (
+          <li key={p.slug} style={{ fontSize: "0.9rem" }}>
+            <strong>{p.slug}</strong>
+            {p.title && p.title !== p.slug ? ` — ${p.title}` : ""}
+            {p.payload_json && typeof p.payload_json === "object" && "blocks" in p.payload_json && Array.isArray((p.payload_json as { blocks: unknown[] }).blocks)
+              ? ` · ${(p.payload_json as { blocks: unknown[] }).blocks.length} block(s)`
+              : ""}
+            {p.source_proposal_id ? <span style={{ color: "#666", marginLeft: "0.35rem" }}>(from proposal)</span> : null}
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
@@ -281,13 +362,21 @@ function StatusPill({ status }: { status: ProposalStatus }) {
   );
 }
 
-function BeforeAfterPreview({ proposal }: { proposal: ChangeProposal }) {
+function BeforeAfterPreview({
+  proposal,
+  compositionPage,
+}: {
+  proposal: ChangeProposal;
+  compositionPage?: CompositionPage | null;
+}) {
+  const fromComposition = compositionPage?.payload_json && typeof compositionPage.payload_json === "object";
   return (
     <section style={{ border: "1px solid #ddd", borderRadius: 8, padding: "0.9rem 1rem" }}>
       <h2 style={{ fontSize: "1.1rem", margin: "0 0 0.5rem" }}>Habitat before / after</h2>
       <p style={{ margin: 0, fontSize: "0.9rem", color: "#555" }}>
-        Comparison of current Public Habitat vs a staged proposal. In V1 this uses mock content; in production it should
-        render real public layout on the left and the proposal preview on the right.
+        {fromComposition
+          ? "Current staging composition (branch head) vs public. Push from Studio to publish."
+          : "Comparison of current Public Habitat vs a staged proposal. In V1 this uses mock content; in production it should render real public layout on the left and the proposal preview on the right."}
       </p>
       <div
         style={{
@@ -321,21 +410,54 @@ function BeforeAfterPreview({ proposal }: { proposal: ChangeProposal }) {
             minHeight: 140,
           }}
         >
-          <h3 style={{ fontSize: "0.95rem", margin: "0 0 0.25rem" }}>Staged proposal preview</h3>
-          <p style={{ margin: 0, fontSize: "0.85rem", color: "#666" }}>
-            {proposal.target_surface === "public_habitat"
-              ? "This proposal targets the public habitat. Use this panel to preview layout and visual changes before publishing."
-              : "This proposal targets Studio or Staging Habitat itself. Use this panel to preview how the control surfaces would change."}
-          </p>
-          <p style={{ margin: "0.4rem 0 0", fontSize: "0.85rem", color: "#444" }}>
-            <strong>{proposal.title}</strong>
-            <br />
-            {proposal.rationale}
-          </p>
-          {proposal.preview_url && (
-            <p style={{ margin: "0.4rem 0 0", fontSize: "0.8rem", color: "#666" }}>
-              Preview route: <code>{proposal.preview_url}</code>
-            </p>
+          <h3 style={{ fontSize: "0.95rem", margin: "0 0 0.25rem" }}>
+            {fromComposition ? "Staging composition (current branch)" : "Staged proposal preview"}
+          </h3>
+          {fromComposition && compositionPage ? (
+            <>
+              <p style={{ margin: 0, fontSize: "0.85rem", color: "#444" }}>
+                <strong>{compositionPage.slug}</strong>
+                {compositionPage.title && compositionPage.title !== compositionPage.slug ? ` — ${compositionPage.title}` : ""}
+              </p>
+              <div style={{ marginTop: "0.5rem", padding: "0.5rem", background: "#f0f9f0", borderRadius: 6, fontSize: "0.8rem" }}>
+                <strong>Layout from staging composition</strong>
+                <p style={{ margin: "0.25rem 0 0", color: "#444" }}>
+                  Page: {(compositionPage.payload_json as HabitatPayloadLike)?.page ?? "—"} · Blocks: {Array.isArray((compositionPage.payload_json as HabitatPayloadLike)?.blocks) ? ((compositionPage.payload_json as HabitatPayloadLike).blocks!.length) : 0}
+                </p>
+              </div>
+            </>
+          ) : (
+            <>
+              <p style={{ margin: 0, fontSize: "0.85rem", color: "#666" }}>
+                {proposal.target_surface === "public_habitat"
+                  ? "This proposal targets the public habitat. Use this panel to preview layout and visual changes before publishing."
+                  : "This proposal targets Studio or Staging Habitat itself. Use this panel to preview how the control surfaces would change."}
+              </p>
+              <p style={{ margin: "0.4rem 0 0", fontSize: "0.85rem", color: "#444" }}>
+                <strong>{proposal.title}</strong>
+                <br />
+                {proposal.rationale}
+              </p>
+              {proposal.proposal_state && (
+                <p style={{ margin: "0.25rem 0 0", fontSize: "0.8rem", color: "#666" }}>
+                  State: <code>{proposal.proposal_state}</code>
+                  {proposal.proposal_role && <> · Role: {proposal.proposal_role}</>}
+                </p>
+              )}
+              {proposal.habitat_payload_json && typeof proposal.habitat_payload_json === "object" ? (
+                <div style={{ marginTop: "0.5rem", padding: "0.5rem", background: "#f5f5f5", borderRadius: 6, fontSize: "0.8rem" }}>
+                  <strong>Layout payload applied to staging</strong>
+                  <p style={{ margin: "0.25rem 0 0", color: "#444" }}>
+                    Page: {(proposal.habitat_payload_json as HabitatPayloadLike).page ?? "—"} · Blocks: {Array.isArray((proposal.habitat_payload_json as HabitatPayloadLike).blocks) ? (proposal.habitat_payload_json as HabitatPayloadLike).blocks!.length : 0}
+                  </p>
+                </div>
+              ) : null}
+              {proposal.preview_url && (
+                <p style={{ margin: "0.4rem 0 0", fontSize: "0.8rem", color: "#666" }}>
+                  Preview route: <code>{proposal.preview_url}</code>
+                </p>
+              )}
+            </>
           )}
         </div>
       </div>

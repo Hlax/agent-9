@@ -4,6 +4,7 @@ import { getSupabaseServer } from "@/lib/supabase-server";
 import { writeChangeRecord } from "@/lib/change-record";
 import { validateHabitatPayload, collectArtifactIdsFromPayload } from "@/lib/habitat-payload";
 import { isLegalProposalStateTransition } from "@/lib/governance-rules";
+import { mergeHabitatProposalIntoStaging } from "@/lib/staging-composition";
 
 /**
  * POST /api/proposals/[id]/approve — approve a proposal and apply it.
@@ -60,6 +61,27 @@ export async function POST(
     }
 
     const approvedBy = user?.email ?? "harvey";
+
+    // Branch model: approve_for_staging for habitat proposals merges into staging composition.
+    const isHabitatForStaging =
+      action === "approve_for_staging" &&
+      proposal.habitat_payload_json != null &&
+      typeof proposal.habitat_payload_json === "object" &&
+      (proposal.target_surface === "staging_habitat" || proposal.target_type === "concept");
+    if (isHabitatForStaging) {
+      const mergeResult = await mergeHabitatProposalIntoStaging(
+        supabase,
+        id,
+        proposal.habitat_payload_json,
+        proposal.title
+      );
+      if (!mergeResult.applied && mergeResult.error) {
+        return NextResponse.json(
+          { error: `Staging merge failed: ${mergeResult.error}` },
+          { status: 400 }
+        );
+      }
+    }
 
     if (action === "apply_name" && proposal.target_type === "identity_name") {
       const { data: ident } = await supabase.from("identity").select("identity_id").eq("is_active", true).limit(1).maybeSingle();

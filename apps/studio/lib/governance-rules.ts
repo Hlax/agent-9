@@ -124,3 +124,11 @@ export function isLegalProposalStateTransition(fromState: string, toState: strin
   if (!allowed) return false;
   return allowed.includes(toState);
 }
+
+/**
+ * Returns the list of legal next proposal states from the given state.
+ * Used by review UI to show available actions (e.g. "Stage", "Approve for publication").
+ */
+export function getNextLegalProposalActions(currentState: string): readonly string[] {
+  return PROPOSAL_STATE_TRANSITIONS[currentState] ?? [];
+}

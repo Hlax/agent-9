@@ -76,11 +76,13 @@ Implementation may run the eligibility check after each session that produces a 
 
 ## 4. Gate from approved to published
 
-- **Approval for staging** (`approved_for_staging`) — Harvey agrees the proposal should be implemented in staging. This is the gate for the agent to build in staging.
-- **Approval for publication** (`approved_for_publication`) — Harvey has reviewed the staging result and agrees it may go to public. This is the gate for publishing to public.
-- **Publish** — Only after `approved_for_publication` may a human or controlled process promote the change to public (e.g. merge, deploy). The Twin does not self-publish.
+- **Approval for staging** (`approved_for_staging`) — Harvey agrees the proposal should be implemented in staging. This is the gate for the agent to build in staging. For habitat proposals, approving for staging **merges** the proposal payload into the **staging composition** (first-class staging_habitat_content table); staging is no longer “proposal rows only” but a mutable branch/workspace.
+- **Staging composition** — The current staging habitat is a coherent composition (one row per page in staging_habitat_content). The Twin can keep refining staging as more proposals are approved; each approval merges into this composition (per-page replace). The staging app renders from the composition.
+- **Approval for publication** (`approved_for_publication`) — Harvey has reviewed the staging result and agrees it may go to public. This is the gate for publishing to public. Legacy path: single-proposal approve_for_publication still writes that proposal to public_habitat_content.
+- **Publish / Promote** — Human-triggered **“Push staging to public”** copies the current staging composition to public (promotion). No runner or Twin self-publish. Optional: approve_for_publication remains for one-proposal-to-public; the primary path is promote staging → public.
+- **Promotion record** — Each push is recorded in habitat_promotion_record (audit and provenance).
 
-So: **approved → staging build → Harvey reviews staging → approve for publication → publish to public.**
+So: **approved → merge into staging composition → Harvey reviews staging → push staging to public (or approve for publication for single proposal).**
 
 ---
 

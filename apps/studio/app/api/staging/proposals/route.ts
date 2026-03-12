@@ -13,7 +13,7 @@ export async function GET() {
 
     const { data, error } = await supabase
       .from("proposal_record")
-      .select("proposal_record_id, lane_type, target_type, title, summary, proposal_state, target_surface, proposal_type, preview_uri, artifact_id, created_at, updated_at")
+      .select("proposal_record_id, lane_type, target_type, proposal_role, title, summary, proposal_state, target_surface, proposal_type, preview_uri, artifact_id, habitat_payload_json, created_at, updated_at")
       .eq("lane_type", "surface")
       .in("proposal_state", ["approved_for_staging", "staged", "approved_for_publication", "published"])
       .order("created_at", { ascending: false })
