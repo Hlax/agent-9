@@ -64,6 +64,16 @@ export function getMaxPendingAvatarProposals(): number {
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MAX_PENDING_AVATAR;
 }
 
+/** Max pending extension proposals (Phase 3). 0 = no cap. Canon: medium_plugin_refactor_plan.md §5.4. */
+export const DEFAULT_MAX_PENDING_EXTENSION_PROPOSALS = 5;
+
+export function getMaxPendingExtensionProposals(): number {
+  const v = process.env.MAX_PENDING_EXTENSION_PROPOSALS;
+  if (v == null || v === "") return DEFAULT_MAX_PENDING_EXTENSION_PROPOSALS;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MAX_PENDING_EXTENSION_PROPOSALS;
+}
+
 /** Max creative_session rows allowed per rolling 1-hour window. 0 = no cap. */
 export const DEFAULT_MAX_SESSIONS_PER_HOUR = 4;
 

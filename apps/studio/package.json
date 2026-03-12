@@ -15,6 +15,7 @@
     "@supabase/supabase-js": "^2.47.10",
     "@twin/agent": "workspace:*",
     "@twin/core": "workspace:*",
+    "@twin/mediums": "workspace:*",
     "@twin/evaluation": "workspace:*",
     "@twin/memory": "workspace:*",
     "@twin/ui": "workspace:*",

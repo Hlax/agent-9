@@ -1,6 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { runSessionPipeline } from "@twin/agent";
+import { runSessionPipeline, createDefaultMediumRegistry } from "@twin/agent";
 import type { SessionPipelineResult } from "@twin/agent";
+import type {
+  FallbackReason,
+  ResolutionSource,
+  MediumFit,
+  ExtensionClassification,
+  MissingCapabilityKey,
+} from "@twin/mediums";
 import type { Artifact, CreativeSession, CreativeDrive, CritiqueRecord, EvaluationSignal, SessionMode } from "@twin/core";
 import {
   runCritique,
@@ -34,6 +41,7 @@ import {
 import {
   getMaxArtifactsPerSession,
   getMaxPendingAvatarProposals,
+  getMaxPendingExtensionProposals,
   getMaxPendingHabitatLayoutProposals,
   isOverTokenLimit,
   getArchiveDecayHalfLifeDays,
@@ -81,7 +89,10 @@ export interface SessionRunSuccessPayload {
   session_id: string;
   artifact_count: number;
   persisted: boolean;
-  requested_medium?: PreferredMedium;
+  requested_medium?: PreferredMedium | string | null;
+  executed_medium?: string | null;
+  fallback_reason?: FallbackReason | null;
+  resolution_source?: ResolutionSource | null;
   artifact_medium: PreferredMedium | "other" | null;
   /** True when archive_entry row was successfully inserted (only set when critique_outcome=archive_candidate). */
   archive_entry_created?: boolean;
@@ -169,6 +180,22 @@ interface SessionExecutionState {
   /** Explicit preferMedium from options (overrides derived when set). */
   preferMedium: PreferredMedium | null;
   promptContext: string | null;
+  /** Requested medium (derivation or explicit). One per generation (invariant). */
+  requested_medium: string | null;
+  /** Executed medium (resolved via registry; fallback to writing when not executable). */
+  executed_medium: string | null;
+  /** Set when requested_medium !== executed_medium (invariant). */
+  fallback_reason: FallbackReason | null;
+  /** How executed_medium was chosen (derivation | fallback_rule | registry_constraint | manual_override). */
+  resolution_source: ResolutionSource | null;
+  /** Phase 2: capability-fit from critique (supported | partial | unsupported). */
+  medium_fit: MediumFit | null;
+  /** Phase 2: from capability-fit when partial/unsupported (MissingCapabilityKey union). */
+  missing_capability: MissingCapabilityKey;
+  /** Phase 2: closed enum; set when partial/unsupported, null when supported. */
+  extension_classification: ExtensionClassification | null;
+  /** Phase 2: "inferred" when confidence from critique/evaluation, "defaulted" when placeholder. */
+  confidence_truth: "inferred" | "defaulted" | null;
   /** Debug score breakdown for return-mode archive selection (focus-selection only). */
   returnSelectionDebug?: {
     selected: RankedCandidate | null;
@@ -181,7 +208,9 @@ interface SessionExecutionState {
 
 /**
  * Lightweight classification for artifact role.
- * This is intentionally narrow for now and can be evolved as metabolism improves.
+ * Phase 1/3: medium-specific branches here and in manageProposals, persistDerivedState, trace, image upload
+ * remain intentional per plan. Plugin metadata (proposalRole, canPropose) is reserved for later; not
+ * authoritative in Phase 3 — do not add new medium branches; new behavior belongs in plugins or registry.
  */
 function inferArtifactRole(
   medium: string | null | undefined,
@@ -313,6 +342,14 @@ function initializeExecutionState(
     executionMode: "auto",
     humanGateReason: null,
     metabolismMode: "manual",
+    requested_medium: null,
+    executed_medium: null,
+    fallback_reason: null,
+    resolution_source: null,
+    medium_fit: null,
+    missing_capability: null,
+    extension_classification: null,
+    confidence_truth: null,
   };
 }
 
@@ -546,6 +583,52 @@ async function buildContexts(state: SessionExecutionState): Promise<SessionExecu
   return { ...state, brainContext, workingContext, sourceContext };
 }
 
+/** Temporary global fallback when requested medium is not executable. Long-term: plugin-defined fallback, registry default, or derivation retry. */
+const FALLBACK_MEDIUM = "writing" as const;
+
+/**
+ * Resolution rules (truthfulness):
+ * - derivation: runtime chose requested_medium via derivePreferredMedium (no explicit caller preference).
+ * - manual_override: caller/operator explicitly forced preferMedium (e.g. API body or cron config).
+ * - registry_constraint: registry prevented executing requested; fallback was applied.
+ * - fallback_rule: (future) could denote how the replacement was chosen when distinct from registry_constraint.
+ *
+ * Exported for tests (resolution matrix, trace integrity).
+ */
+export function resolveExecutedMedium(
+  registry: ReturnType<typeof createDefaultMediumRegistry>,
+  /** Requested medium id (e.g. writing | concept | image | null, or unknown string for tests). */
+  requested: string | null,
+  /** True only when caller explicitly set preferMedium (e.g. API/cron), not when derived. */
+  wasRequestedExplicit: boolean
+): {
+  executed_medium: string;
+  fallback_reason: FallbackReason | null;
+  resolution_source: ResolutionSource;
+} {
+  const effectiveRequested = requested ?? FALLBACK_MEDIUM;
+  if (registry.isExecutable(effectiveRequested)) {
+    return {
+      executed_medium: effectiveRequested,
+      fallback_reason: null,
+      resolution_source: wasRequestedExplicit ? "manual_override" : "derivation",
+    };
+  }
+  const plugin = registry.get(effectiveRequested);
+  const fallback_reason: FallbackReason = !plugin
+    ? "unregistered"
+    : plugin.status === "proposal_only"
+      ? "proposal_only"
+      : plugin.status === "disabled"
+        ? "disabled"
+        : "missing_capability";
+  return {
+    executed_medium: FALLBACK_MEDIUM,
+    fallback_reason,
+    resolution_source: "registry_constraint",
+  };
+}
+
 async function runGeneration(state: SessionExecutionState): Promise<SessionExecutionState> {
   const sessionState = {
     ...state.previousState,
@@ -556,6 +639,15 @@ async function runGeneration(state: SessionExecutionState): Promise<SessionExecu
     state.preferMedium,
     state.isCron
   );
+  const requested_medium = state.preferMedium ?? derivedPreferMedium;
+  const registry = createDefaultMediumRegistry();
+  const wasRequestedExplicit = state.preferMedium != null;
+  const { executed_medium, fallback_reason, resolution_source } = resolveExecutedMedium(
+    registry,
+    requested_medium,
+    wasRequestedExplicit
+  );
+
   const pipelineResult = await runSessionPipeline(
     {
       mode: state.sessionMode,
@@ -568,7 +660,11 @@ async function runGeneration(state: SessionExecutionState): Promise<SessionExecu
       sourceContext: state.sourceContext || undefined,
       preferMedium: (state.preferMedium ?? derivedPreferMedium) ?? undefined,
     },
-    { openaiApiKey: process.env.OPENAI_API_KEY ?? undefined }
+    {
+      openaiApiKey: process.env.OPENAI_API_KEY ?? undefined,
+      registry,
+      executed_medium,
+    }
   );
   const tokensUsed =
     "tokensUsed" in pipelineResult && typeof pipelineResult.tokensUsed === "number"
@@ -605,6 +701,10 @@ async function runGeneration(state: SessionExecutionState): Promise<SessionExecu
     primaryArtifact,
     derivedPreferMedium,
     tokensUsed,
+    requested_medium: requested_medium ?? null,
+    executed_medium,
+    fallback_reason,
+    resolution_source,
   };
 }
 
@@ -633,6 +733,93 @@ async function runCritiqueAndEvaluation(
 }
 
 /**
+ * Phase 2: Classify capability-fit from critique (medium_fit_note, critique_outcome).
+ * Sets medium_fit, missing_capability (MissingCapabilityKey union), extension_classification.
+ * Descriptive only; no extension proposals created.
+ *
+ * Heuristic: unsupported = outcome "stop" (hard stop) OR (outcome "archive_candidate" AND note
+ * suggests medium/body mismatch). archive_candidate alone can mean "low value / not worth continuing"
+ * rather than wrong medium, so we only treat it as unsupported when the note supports that.
+ * extension_classification may remain null even when medium_fit is partial/unsupported if the
+ * critique does not support a trustworthy classification — bad classification is worse than null.
+ */
+export function applyCapabilityFit(state: SessionExecutionState): SessionExecutionState {
+  const critique = state.critique;
+  if (!critique) {
+    return { ...state, medium_fit: null, missing_capability: null, extension_classification: null };
+  }
+
+  const note = (critique.medium_fit_note ?? "").toLowerCase();
+  const outcome = (critique.critique_outcome ?? "continue").toLowerCase();
+
+  const noteSuggestsMediumMismatch =
+    /\b(poor fit|wrong medium|doesn't fit|ill.?suited|misaligned|better as|should be .* instead)\b/.test(note) ||
+    /\b(interactive|stateful|dynamic|runtime)\b/.test(note);
+
+  let medium_fit: MediumFit = "supported";
+  if (outcome === "stop") {
+    medium_fit = "unsupported";
+  } else if (outcome === "archive_candidate" && noteSuggestsMediumMismatch) {
+    medium_fit = "unsupported";
+  } else if (outcome === "archive_candidate") {
+    medium_fit = "partial"; // low value / not worth continuing, not necessarily wrong medium
+  } else if (outcome === "shift_medium" || outcome === "reflect") {
+    medium_fit = "partial";
+  } else if (noteSuggestsMediumMismatch) {
+    medium_fit = "partial";
+  }
+
+  let missing_capability_out: MissingCapabilityKey = null;
+  if (medium_fit !== "supported") {
+    if (/\binteractive\b/.test(note)) missing_capability_out = "interactive_ui";
+    else if (/\bstateful\b|\bdynamic\b/.test(note)) missing_capability_out = "stateful_surface";
+  }
+
+  // extension_classification: when partial/unsupported, infer from note or leave null. Null is valid
+  // when evidence does not support a trustworthy classification.
+  let extension_classification: ExtensionClassification = null;
+  if (medium_fit !== "supported") {
+    if (/\binteractive\b|\bstateful\b|\bsurface\b/.test(note)) extension_classification = "surface_environment_extension";
+    else if (/\bmedium\b|\bformat\b/.test(note)) extension_classification = "medium_extension";
+    else if (/\bworkflow\b|\bpipeline\b/.test(note)) extension_classification = "workflow_extension";
+    else if (/\btool\b|\btoolchain\b/.test(note)) extension_classification = "toolchain_extension";
+  }
+
+  return {
+    ...state,
+    medium_fit,
+    missing_capability: missing_capability_out,
+    extension_classification,
+  };
+}
+
+/**
+ * Phase 2: Derive confidence from evaluation/critique and set confidence_truth.
+ * When we have evaluation scores, use mean of alignment and pull; else leave default and mark defaulted.
+ * Exported for tests.
+ */
+export function applyConfidenceFromCritique(state: SessionExecutionState): SessionExecutionState {
+  const evaluation = state.evaluation;
+  const decisionSummary = state.decisionSummary;
+  if (!evaluation) {
+    return {
+      ...state,
+      confidence_truth: "defaulted",
+      decisionSummary: { ...decisionSummary, confidence: decisionSummary.confidence },
+    };
+  }
+  const alignment = evaluation.alignment_score ?? 0.5;
+  const pull = evaluation.pull_score ?? 0.5;
+  const confidence = Math.round(((alignment + pull) / 2) * 100) / 100;
+  const clamped = Math.max(0, Math.min(1, confidence));
+  return {
+    ...state,
+    confidence_truth: "inferred",
+    decisionSummary: { ...decisionSummary, confidence: clamped },
+  };
+}
+
+/**
  * Shared internal runner used by both manual POST /api/session/run and cron.
  * Throws SessionRunError on handled failures so callers can map to HTTP.
  */
@@ -654,6 +841,8 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
     return finalizeResult(state);
   }
   state = await runCritiqueAndEvaluation(state);
+  state = applyCapabilityFit(state);
+  state = applyConfidenceFromCritique(state);
   if (state.supabase) {
     state = await persistCoreOutputs(state);
     state = await persistDerivedState(state);
@@ -678,7 +867,10 @@ function finalizeResult(state: SessionExecutionState): SessionRunSuccessPayload 
     session_id: result?.session.session_id ?? "",
     artifact_count: artifactCount,
     persisted: Boolean(state.supabase),
-    requested_medium: state.derivedPreferMedium ?? undefined,
+    requested_medium: state.requested_medium ?? state.derivedPreferMedium ?? undefined,
+    executed_medium: state.executed_medium ?? undefined,
+    fallback_reason: state.fallback_reason ?? undefined,
+    resolution_source: state.resolution_source ?? undefined,
     artifact_medium: artifactMedium,
     archive_entry_created: state.archiveEntryCreated,
     recurrence_updated: state.recurrenceUpdated,
@@ -999,6 +1191,26 @@ async function persistDerivedState(state: SessionExecutionState): Promise<Sessio
   };
 }
 
+/**
+ * Phase 3: Extension proposal eligibility (plan §Phase 3 gating).
+ * Create only when all are true: source artifact exists, medium_fit partial/unsupported,
+ * extension_classification non-null, and missing_capability or critique rationale provides support.
+ * Exported for tests.
+ */
+export function isExtensionProposalEligible(state: SessionExecutionState): boolean {
+  const artifact = state.primaryArtifact;
+  const critique = state.critique;
+  if (!artifact || !critique) return false;
+  const medium_fit = state.medium_fit;
+  const classification = state.extension_classification;
+  if (medium_fit !== "partial" && medium_fit !== "unsupported") return false;
+  if (classification == null) return false;
+  const hasCapabilitySupport = state.missing_capability != null;
+  const hasRationale =
+    Boolean(critique.medium_fit_note?.trim()) || Boolean(critique.overall_summary?.trim());
+  return hasCapabilitySupport || hasRationale;
+}
+
 async function manageProposals(state: SessionExecutionState): Promise<SessionExecutionState> {
   const supabase = state.supabase;
   const artifact = state.primaryArtifact;
@@ -1213,6 +1425,94 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
     }
   }
 
+  // Phase 3: extension proposal — creation-only; no apply in runner. lane_type = system is temporary
+  // reuse; extension proposals are identified by target_type = extension and extension-classified proposal_role.
+  if (isExtensionProposalEligible(state)) {
+    const extensionCap = getMaxPendingExtensionProposals();
+    const EXTENSION_PROPOSAL_ROLES = [
+      "medium_extension",
+      "toolchain_extension",
+      "workflow_extension",
+      "surface_environment_extension",
+      "system_capability_extension",
+    ] as const;
+    const { count: pendingExtensionCount } = await supabase
+      .from("proposal_record")
+      .select("proposal_record_id", { count: "exact", head: true })
+      .eq("lane_type", "system")
+      .in("proposal_role", EXTENSION_PROPOSAL_ROLES)
+      .eq("proposal_state", "pending_review");
+    const pending = pendingExtensionCount ?? 0;
+    if (extensionCap > 0 && pending >= extensionCap) {
+      console.log("[session] skipping extension proposal: backlog at cap", {
+        pending,
+        cap: extensionCap,
+      });
+    } else {
+      // Optional dedupe: avoid duplicate extension proposal for same artifact + role.
+      const { data: existingForArtifact } = await supabase
+        .from("proposal_record")
+        .select("proposal_record_id")
+        .eq("lane_type", "system")
+        .eq("proposal_role", state.extension_classification!)
+        .eq("artifact_id", artifact!.artifact_id)
+        .eq("proposal_state", "pending_review")
+        .limit(1)
+        .maybeSingle();
+      if (!existingForArtifact) {
+        const rationale = [critique!.medium_fit_note, critique!.overall_summary]
+          .filter(Boolean)
+          .join(" ");
+        const bodySummary = capSummaryTo200Words(
+          rationale || artifact!.summary || artifact!.title || "Capability-fit suggests extension."
+        );
+        // UX: make it obvious to operators this is an extension proposal, not a config change (plan §pre-push).
+        const summary = bodySummary
+          ? `Extension proposal (operator review only; no apply in runner). ${bodySummary}`
+          : "Extension proposal (operator review only; no apply in runner).";
+        const extensionRow = {
+          lane_type: "system" as const,
+          target_type: "extension" as const,
+          target_id: artifact!.artifact_id,
+          artifact_id: artifact!.artifact_id,
+          title: artifact!.title
+            ? `Extension: ${state.extension_classification} — ${artifact!.title.slice(0, 80)}`
+            : `Extension: ${state.extension_classification}`,
+          summary,
+          proposal_state: "pending_review",
+          proposal_role: state.extension_classification!,
+          target_surface: null,
+          proposal_type: "extension",
+          preview_uri: null,
+          review_note: null,
+          created_by: state.createdBy,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        const { data: insertedExtension, error: insertExtensionError } = await supabase
+          .from("proposal_record")
+          .insert(extensionRow)
+          .select("proposal_record_id")
+          .single();
+        if (insertExtensionError) {
+          const msg = `extension proposal insert failed: ${insertExtensionError.message}`;
+          console.warn("[session]", msg, { artifact_id: artifact!.artifact_id });
+          warnings = [...warnings, msg];
+        } else if (insertedExtension?.proposal_record_id) {
+          traceProposalId = insertedExtension.proposal_record_id as string;
+          traceProposalType = "extension";
+          proposalCreated = true;
+          decisionSummary = {
+            ...decisionSummary,
+            next_action:
+              decisionSummary.next_action ??
+              "Extension proposal created for operator review (no apply path in runner).",
+          };
+        }
+      }
+    }
+  }
+
   return {
     ...state,
     proposalCreated,
@@ -1287,6 +1587,14 @@ async function writeTraceAndDeliberation(
     generation_model: generationRunRow.model_name,
     start_time: result.session.started_at,
     end_time: result.session.ended_at ?? new Date().toISOString(),
+    requested_medium: state.requested_medium ?? null,
+    executed_medium: state.executed_medium ?? null,
+    fallback_reason: state.fallback_reason ?? null,
+    resolution_source: state.resolution_source ?? null,
+    medium_fit: state.medium_fit ?? null,
+    missing_capability: state.missing_capability ?? null,
+    extension_classification: state.extension_classification ?? null,
+    confidence_truth: state.confidence_truth ?? null,
   };
   const { error: traceUpdateError } = await supabase
     .from("creative_session")

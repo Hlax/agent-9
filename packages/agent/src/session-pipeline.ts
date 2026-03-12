@@ -2,6 +2,7 @@
  * Session pipeline: start session → load context → generate → critique → evaluate → store.
  * Canon: docs/02_runtime/session_loop.md.
  * Phase G: one real GPT-backed writing/concept path; persistence delegated to callers.
+ * When registry + executed_medium are provided, generation is dispatched via the medium registry.
  */
 
 import type {
@@ -11,8 +12,9 @@ import type {
   SessionMode,
   ArtifactMedium,
 } from "@twin/core";
-import { generateWriting } from "./generate-writing";
-import { generateImage } from "./generate-image";
+import type { MediumRegistry } from "@twin/mediums";
+import { generateWriting } from "./generate-writing.js";
+import { generateImage } from "./generate-image.js";
 
 export interface SessionContext {
   /** Loaded for session start; identity, recent sessions, threads, etc. */
@@ -56,6 +58,10 @@ export async function runSessionPipeline(
     supabase?: unknown;
     /** Pass OPENAI_API_KEY from caller (e.g. Studio API route) */
     openaiApiKey?: string | null;
+    /** When set, generation is dispatched via the medium registry (Phase 1). */
+    registry?: MediumRegistry;
+    /** Executed medium for this run (required when registry is set). */
+    executed_medium?: string | null;
   }
 ): Promise<SessionPipelineResult> {
   const session: CreativeSession = {
@@ -77,31 +83,47 @@ export async function runSessionPipeline(
     throw new Error("OPENAI_API_KEY is required for generation");
   }
 
-  const preferImage = context.preferMedium === "image";
+  let generated: { title: string; summary: string; content_text: string; medium: ArtifactMedium; content_uri?: string | null; usage?: { prompt_tokens: number; completion_tokens: number } };
 
-  const generated = preferImage
-    ? await generateImage(
-        {
-          mode: context.mode,
-          promptContext: context.promptContext,
-          sourceContext: context.sourceContext,
-          workingContext: context.workingContext,
-        },
-        { apiKey }
-      )
-    : await generateWriting(
-        {
-          mode: context.mode,
-          preferMedium: context.preferMedium,
-          promptContext: context.promptContext,
-          sourceContext: context.sourceContext,
-          workingContext: context.workingContext,
-        },
-        { apiKey }
-      );
+  if (options?.registry != null && options.executed_medium != null) {
+    const plugin = options.registry.get(options.executed_medium ?? "writing");
+    if (!plugin?.generate) {
+      throw new Error(`Medium "${options.executed_medium}" has no generator in registry`);
+    }
+    const result = await plugin.generate({
+      mode: context.mode,
+      promptContext: context.promptContext,
+      sourceContext: context.sourceContext,
+      workingContext: context.workingContext,
+      openaiApiKey: apiKey,
+    });
+    generated = result;
+  } else {
+    const preferImage = context.preferMedium === "image";
+    generated = preferImage
+      ? await generateImage(
+          {
+            mode: context.mode,
+            promptContext: context.promptContext,
+            sourceContext: context.sourceContext,
+            workingContext: context.workingContext,
+          },
+          { apiKey }
+        )
+      : await generateWriting(
+          {
+            mode: context.mode,
+            preferMedium: context.preferMedium,
+            promptContext: context.promptContext,
+            sourceContext: context.sourceContext,
+            workingContext: context.workingContext,
+          },
+          { apiKey }
+        );
+  }
 
   const medium: ArtifactMedium = generated.medium;
-  const contentUri = preferImage && "content_uri" in generated ? generated.content_uri : null;
+  const contentUri = generated.medium === "image" && "content_uri" in generated ? generated.content_uri : null;
   const tokensUsed =
     "usage" in generated && generated.usage
       ? generated.usage.prompt_tokens + generated.usage.completion_tokens
@@ -119,8 +141,8 @@ export async function runSessionPipeline(
     current_approval_state: "pending_review",
     current_publication_state: "private",
     content_text: generated.content_text,
-    content_uri: contentUri,
-    preview_uri: contentUri,
+    content_uri: contentUri ?? null,
+    preview_uri: contentUri ?? null,
     notes: null,
     alignment_score: null,
     emergence_score: null,
