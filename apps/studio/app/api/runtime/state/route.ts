@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { getRuntimeConfig } from "@/lib/runtime-config";
-import { getSynthesisPressure } from "@/lib/synthesis-pressure";
+import { getSynthesisPressure, computeSynthesisPressure } from "@/lib/synthesis-pressure";
 
 /**
  * GET /api/runtime/state — latest creative_state_snapshot, backlog, runtime config, synthesis_pressure, and introspection fields.
@@ -9,7 +9,25 @@ import { getSynthesisPressure } from "@/lib/synthesis-pressure";
 export async function GET() {
   const supabase = getSupabaseServer();
   if (!supabase) {
-    return NextResponse.json({ snapshot: null, backlog: null, return_candidates: 0 });
+    // Return a complete, shape-consistent payload even when the DB client is unavailable.
+    const emptySynthesisPressure = computeSynthesisPressure({
+      recurrence_pull_signal: 0.5,
+      unfinished_pull_signal: 0,
+      archive_candidate_pressure: 0,
+      return_success_trend: 0.5,
+      repetition_without_movement_penalty: 0,
+      momentum: 0.5,
+    });
+    return NextResponse.json({
+      snapshot: null,
+      backlog: { artifacts: {}, proposals: {} },
+      runtime: { mode: "default", always_on: false, tokens_used_today: 0, last_run_at: null },
+      return_candidates: 0,
+      creative_state: null,
+      active_project: null,
+      active_thread: null,
+      synthesis_pressure: emptySynthesisPressure,
+    });
   }
 
   const [stateRes, artifactBacklogRes, proposalBacklogRes, archiveCountRes, runtimeConfig, latestSessionRes, synthesisPressurePayload] =

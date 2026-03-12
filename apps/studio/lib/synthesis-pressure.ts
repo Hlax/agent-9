@@ -210,37 +210,51 @@ const TRAJECTORY_REVIEW_WINDOW = 10;
  * Does not mutate any state or affect runtime behavior.
  */
 export async function getSynthesisPressure(supabase: SupabaseClient): Promise<SynthesisPressurePayload> {
-  const [snapshotRes, archiveCountRes, reviewRes] = await Promise.all([
-    supabase
-      .from("creative_state_snapshot")
-      .select("idea_recurrence, unfinished_projects, recent_exploration_rate")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-    supabase.from("archive_entry").select("archive_entry_id", { count: "exact", head: true }),
-    supabase
-      .from("trajectory_review")
-      .select("narrative_state, action_kind, outcome_kind, movement_score, trajectory_quality, issues_json")
-      .order("created_at", { ascending: false })
-      .limit(TRAJECTORY_REVIEW_WINDOW),
-  ]);
+  try {
+    const [snapshotRes, archiveCountRes, reviewRes] = await Promise.all([
+      supabase
+        .from("creative_state_snapshot")
+        .select("idea_recurrence, unfinished_projects, recent_exploration_rate")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase.from("archive_entry").select("archive_entry_id", { count: "exact", head: true }),
+      supabase
+        .from("trajectory_review")
+        .select("narrative_state, action_kind, outcome_kind, movement_score, trajectory_quality, issues_json")
+        .order("created_at", { ascending: false })
+        .limit(TRAJECTORY_REVIEW_WINDOW),
+    ]);
 
-  const snapshot = snapshotRes.data as Record<string, unknown> | null;
-  const archiveCount = archiveCountRes.count ?? 0;
-  const reviewRows = (reviewRes.data ?? []) as TrajectoryReviewRow[];
+    const snapshot = snapshotRes.data as Record<string, unknown> | null;
+    const archiveCount = archiveCountRes.count ?? 0;
+    const reviewRows = (reviewRes.data ?? []) as TrajectoryReviewRow[];
 
-  const ideaRecurrence = snapshot?.idea_recurrence as number | null | undefined;
-  const unfinishedProjects = snapshot?.unfinished_projects as number | null | undefined;
-  const recentExplorationRate = snapshot?.recent_exploration_rate as number | null | undefined;
+    const ideaRecurrence = snapshot?.idea_recurrence as number | null | undefined;
+    const unfinishedProjects = snapshot?.unfinished_projects as number | null | undefined;
+    const recentExplorationRate = snapshot?.recent_exploration_rate as number | null | undefined;
 
-  const input: SynthesisPressureInput = {
-    recurrence_pull_signal: deriveRecurrencePullSignal(ideaRecurrence),
-    unfinished_pull_signal: deriveUnfinishedPullSignal(archiveCount, unfinishedProjects),
-    archive_candidate_pressure: deriveArchiveCandidatePressure(archiveCount),
-    return_success_trend: deriveReturnSuccessTrend(reviewRows),
-    repetition_without_movement_penalty: deriveRepetitionPenalty(reviewRows),
-    momentum: deriveMomentum(recentExplorationRate),
-  };
+    const input: SynthesisPressureInput = {
+      recurrence_pull_signal: deriveRecurrencePullSignal(ideaRecurrence),
+      unfinished_pull_signal: deriveUnfinishedPullSignal(archiveCount, unfinishedProjects),
+      archive_candidate_pressure: deriveArchiveCandidatePressure(archiveCount),
+      return_success_trend: deriveReturnSuccessTrend(reviewRows),
+      repetition_without_movement_penalty: deriveRepetitionPenalty(reviewRows),
+      momentum: deriveMomentum(recentExplorationRate),
+    };
 
-  return computeSynthesisPressure(input);
+    return computeSynthesisPressure(input);
+  } catch {
+    // On any Supabase outage or unexpected error, return a safe-default payload.
+    // All signals default to neutral (0.5) with no archive pressure, so the
+    // metric reports "rising" rather than a stale or misleading high/low value.
+    return computeSynthesisPressure({
+      recurrence_pull_signal: 0.5,
+      unfinished_pull_signal: 0,
+      archive_candidate_pressure: 0,
+      return_success_trend: 0.5,
+      repetition_without_movement_penalty: 0,
+      momentum: 0.5,
+    });
+  }
 }
