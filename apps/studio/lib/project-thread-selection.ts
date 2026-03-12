@@ -11,12 +11,23 @@ export interface ProjectThreadSelection {
   ideaId: string | null;
 }
 
+/** Optional bias from active session intent (soft boost for matching project/thread). */
+export interface IntentFocusBias {
+  projectId?: string | null;
+  threadId?: string | null;
+}
+
+/** Boost multiplier for intent-matched project/thread (soft; default 1.4). */
+const INTENT_BOOST = 1.4;
+
 /**
  * Select one active project, one active idea thread (weighted), and optionally one idea
  * from that thread (via idea_to_thread). If no projects/threads/ideas exist, returns nulls.
+ * Optional intentBias boosts weight for the given project/thread so the runtime can "lean" toward its active intention.
  */
 export async function selectProjectAndThread(
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
+  intentBias?: IntentFocusBias | null
 ): Promise<ProjectThreadSelection> {
   const { data: projects } = await supabase
     .from("project")
@@ -31,7 +42,11 @@ export async function selectProjectAndThread(
 
   const projectWeights = projects.map((proj) => {
     const pri = (proj as { priority?: number | null }).priority ?? 0.5;
-    return pri * 0.6 + 0.4;
+    let w = pri * 0.6 + 0.4;
+    if (intentBias?.projectId && (proj as { project_id?: string }).project_id === intentBias.projectId) {
+      w *= INTENT_BOOST;
+    }
+    return w;
   });
   const projectTotal = projectWeights.reduce((a, b) => a + b, 0) || 1;
   let projectAcc = 0;
@@ -49,6 +64,8 @@ export async function selectProjectAndThread(
 
   if (!projectId) return { projectId: null, ideaThreadId: null, ideaId: null };
 
+  // Recurrence loop: recurrence_score (and creative_pull) are written by session-runner persistDerivedState
+  // for the selected idea/idea_thread. We read them here so repeated threads get higher weight next session.
   const { data: threads } = await supabase
     .from("idea_thread")
     .select("idea_thread_id, recurrence_score, creative_pull")
@@ -64,7 +81,11 @@ export async function selectProjectAndThread(
   const weights = threads.map((t) => {
     const r = t.recurrence_score ?? 0.5;
     const p = t.creative_pull ?? 0.5;
-    return r * 0.6 + p * 0.4;
+    let w = r * 0.6 + p * 0.4;
+    if (intentBias?.threadId && (t as { idea_thread_id?: string }).idea_thread_id === intentBias.threadId) {
+      w *= INTENT_BOOST;
+    }
+    return w;
   });
   const total = weights.reduce((a, b) => a + b, 0) || 1;
   let acc = 0;
@@ -97,6 +118,7 @@ export async function selectProjectAndThread(
   const ideaIds = linkRows.map((row) => row.idea_id).filter(Boolean) as string[];
   if (ideaIds.length === 0) return { projectId, ideaThreadId, ideaId: null };
 
+  // Same recurrence loop: idea.recurrence_score is written by session-runner for selected idea; we weight by it here.
   const { data: ideas } = await supabase
     .from("idea")
     .select("idea_id, recurrence_score, creative_pull")

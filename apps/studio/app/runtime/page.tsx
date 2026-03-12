@@ -12,6 +12,9 @@ import {
   getRuntimeTracePayload,
   getRuntimeDeliberationPayload,
   getRuntimeContinuityPayload,
+  getSessionContinuityTimeline,
+  type SessionTimelineRow,
+  type SessionClusteringSummary,
 } from "@/lib/runtime-state-api";
 
 interface TraceSession {
@@ -42,12 +45,14 @@ interface TraceSession {
 
 async function fetchRuntimeState() {
   const supabase = getSupabaseServer();
-  const [stateRes, traceRes, deliberationRes, continuityRes] = await Promise.all([
+  const [stateRes, traceRes, deliberationRes, continuityRes, timelineRes] = await Promise.all([
     getRuntimeStatePayload(supabase),
     getRuntimeTracePayload(supabase),
     getRuntimeDeliberationPayload(supabase),
     getRuntimeContinuityPayload(supabase),
+    getSessionContinuityTimeline(supabase, 40),
   ]);
+  const timelinePayload = timelineRes as { rows: SessionTimelineRow[]; clustering_summary: SessionClusteringSummary };
   return {
     state: stateRes as Record<string, unknown> | null,
     traces: traceRes as { sessions: TraceSession[] } | null,
@@ -56,13 +61,20 @@ async function fetchRuntimeState() {
       sessions: ContinuitySessionRow[];
       summary: ContinuityAggregateSummary | null;
     } | null,
+    sessionTimeline: timelinePayload.rows,
+    clusteringSummary: timelinePayload.clustering_summary,
   };
 }
 
 export default async function RuntimeDebugPage() {
-  const { state, traces, deliberation, continuity } = await fetchRuntimeState();
+  const { state, traces, deliberation, continuity, sessionTimeline, clusteringSummary } = await fetchRuntimeState();
   const latestDeliberation = deliberation?.trace ?? null;
   const health = continuity ? buildRuntimeHealthSummary(continuity.sessions ?? []) : null;
+  const activeIntent = (state as Record<string, unknown> | null)?.active_intent as {
+    target_project_id?: string | null;
+    target_thread_id?: string | null;
+    intent_kind?: string;
+  } | null | undefined;
 
   return (
     <main style={{ maxWidth: 720, margin: "0 auto", padding: "1rem" }}>
@@ -153,6 +165,243 @@ export default async function RuntimeDebugPage() {
                 2
               )}
             </pre>
+          </section>
+          {(() => {
+            const activeIntent = (state as Record<string, unknown>).active_intent as {
+              intent_id: string;
+              intent_kind: string;
+              target_project_id: string | null;
+              target_thread_id: string | null;
+              reason_summary: string | null;
+              confidence: number | null;
+              source_session_id: string | null;
+              last_reinforced_session_id: string | null;
+            } | null;
+            return (
+              <section
+                style={{
+                  marginTop: "1.5rem",
+                  border: "1px solid #ddd",
+                  borderRadius: 8,
+                  padding: "1rem",
+                  background: "#fafafa",
+                }}
+              >
+                <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Active session intent</h2>
+                <p style={{ fontSize: "0.85rem", color: "#555", margin: "0 0 0.5rem" }}>
+                  Continuity layer: what the runtime is currently trying to do next (explore, refine, consolidate, reflect, return). Soft bias only — intent is revisable each session.
+                </p>
+                {activeIntent ? (
+                  <ul style={{ listStyle: "none", padding: 0, margin: 0, fontSize: "0.9rem" }}>
+                    <li><strong>Kind:</strong> {activeIntent.intent_kind}</li>
+                    {activeIntent.reason_summary && <li><strong>Reason:</strong> {activeIntent.reason_summary}</li>}
+                    {activeIntent.confidence != null && <li><strong>Confidence:</strong> {activeIntent.confidence}</li>}
+                    {(activeIntent.target_project_id || activeIntent.target_thread_id) && (
+                      <li>
+                        <strong>Target:</strong>{" "}
+                        {activeIntent.target_project_id && <span>project {activeIntent.target_project_id.slice(0, 8)}…</span>}
+                        {activeIntent.target_project_id && activeIntent.target_thread_id && " · "}
+                        {activeIntent.target_thread_id && <span>thread {activeIntent.target_thread_id.slice(0, 8)}…</span>}
+                      </li>
+                    )}
+                    {activeIntent.last_reinforced_session_id && (
+                      <li><strong>Last reinforced:</strong> session {activeIntent.last_reinforced_session_id.slice(0, 8)}…</li>
+                    )}
+                  </ul>
+                ) : (
+                  <p style={{ fontSize: "0.9rem", color: "#666" }}>No active intent. Next session will create one from its mode and focus.</p>
+                )}
+              </section>
+            );
+          })()}
+          <section
+            style={{
+              marginTop: "1.5rem",
+              border: "1px solid #ddd",
+              borderRadius: 8,
+              padding: "1rem",
+              background: "#fafafa",
+            }}
+          >
+            <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Session clustering summary</h2>
+            <p style={{ fontSize: "0.85rem", color: "#555", margin: "0 0 0.5rem" }}>
+              Lightweight metrics from the same session window as the timeline below. Heuristic only — not a hard rule.
+            </p>
+            {clusteringSummary && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", marginBottom: "0.75rem" }}>
+                <div>
+                  <strong>Thread repeat rate:</strong>{" "}
+                  {clusteringSummary.thread_repeat_rate != null
+                    ? clusteringSummary.thread_repeat_rate.toFixed(2)
+                    : "—"}
+                  {clusteringSummary.comparable_pairs > 0 && (
+                    <span style={{ fontSize: "0.8rem", color: "#666" }}>
+                      {" "}({clusteringSummary.comparable_pairs} pairs)
+                    </span>
+                  )}
+                </div>
+                <div>
+                  <strong>Unique threads:</strong> {clusteringSummary.unique_thread_count}
+                </div>
+                <div>
+                  <strong>Longest same-thread streak:</strong> {clusteringSummary.longest_same_thread_streak}
+                </div>
+                {clusteringSummary.interpretation && (
+                  <div style={{ width: "100%", fontSize: "0.85rem", color: "#555" }}>
+                    <strong>Interpretation (heuristic):</strong> {clusteringSummary.interpretation}{" "}
+                    <span style={{ fontStyle: "italic" }}>
+                      (&lt;0.2 chaotic · 0.2–0.4 light exploration · 0.4–0.7 healthy clustering · &gt;0.7 possible stickiness)
+                    </span>
+                  </div>
+                )}
+                {Object.keys(clusteringSummary.mode_mix).length > 0 && (
+                  <div style={{ width: "100%" }}>
+                    <strong>Mode mix:</strong>{" "}
+                    {Object.entries(clusteringSummary.mode_mix)
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([mode, count]) => `${mode}: ${count}`)
+                      .join(" · ")}
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+          <section
+            style={{
+              marginTop: "1rem",
+              border: "1px solid #ddd",
+              borderRadius: 8,
+              padding: "1rem",
+              background: "#fafafa",
+            }}
+          >
+            <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Session continuity timeline</h2>
+            <p style={{ fontSize: "0.85rem", color: "#555", margin: "0 0 0.75rem" }}>
+              Last 40 sessions: mode, drive, focus (project/thread), confidence, trajectory outcome. Use this to see clustering, intent persistence, reflect recovery, and drift.
+            </p>
+            {sessionTimeline && sessionTimeline.length > 0 ? (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
+                      <th style={{ padding: "0.35rem 0.5rem", whiteSpace: "nowrap" }}>Date</th>
+                      <th style={{ padding: "0.35rem 0.5rem" }}>Transition</th>
+                      <th style={{ padding: "0.35rem 0.5rem" }}>Mode</th>
+                      <th style={{ padding: "0.35rem 0.5rem" }}>Drive</th>
+                      <th style={{ padding: "0.35rem 0.5rem", maxWidth: 120 }}>Project</th>
+                      <th style={{ padding: "0.35rem 0.5rem", maxWidth: 120 }}>Thread</th>
+                      <th style={{ padding: "0.35rem 0.5rem" }}>Conf</th>
+                      <th style={{ padding: "0.35rem 0.5rem" }}>Outcome</th>
+                      <th style={{ padding: "0.35rem 0.5rem" }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sessionTimeline.map((s) => {
+                      const intentMatch =
+                        activeIntent &&
+                        ((activeIntent.target_project_id && activeIntent.target_project_id === s.project_id) ||
+                          (activeIntent.target_thread_id && activeIntent.target_thread_id === s.thread_id));
+                      return (
+                        <tr key={s.session_id} style={{ borderBottom: "1px solid #eee" }}>
+                          <td style={{ padding: "0.35rem 0.5rem", whiteSpace: "nowrap" }}>
+                            {new Date(s.created_at).toLocaleString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </td>
+                          <td style={{ padding: "0.35rem 0.5rem" }}>
+                            <span
+                              style={{
+                                display: "inline-block",
+                                padding: "0.1rem 0.35rem",
+                                borderRadius: 4,
+                                fontSize: "0.7rem",
+                                background:
+                                  s.thread_transition === "same-thread"
+                                    ? "#e0f0e0"
+                                    : s.thread_transition === "thread-switch"
+                                      ? "#ffe8cc"
+                                      : "#f0f0f0",
+                                color:
+                                  s.thread_transition === "same-thread"
+                                    ? "#282"
+                                    : s.thread_transition === "thread-switch"
+                                      ? "#a60"
+                                      : "#666",
+                              }}
+                              title={
+                                s.thread_transition === "same-thread"
+                                  ? "Same thread as next (older) session"
+                                  : s.thread_transition === "thread-switch"
+                                    ? "Switched thread vs next (older) session"
+                                    : "No comparable thread (missing or last in window)"
+                              }
+                            >
+                              {s.thread_transition === "same-thread"
+                                ? "same"
+                                : s.thread_transition === "thread-switch"
+                                  ? "switch"
+                                  : "—"}
+                            </span>
+                            {s.thread_streak_length > 0 && (
+                              <span style={{ marginLeft: "0.25rem", fontSize: "0.7rem", color: "#666" }}>
+                                ×{s.thread_streak_length}
+                              </span>
+                            )}
+                          </td>
+                          <td style={{ padding: "0.35rem 0.5rem" }}>
+                            <span
+                              style={{
+                                display: "inline-block",
+                                padding: "0.1rem 0.35rem",
+                                borderRadius: 4,
+                                background: s.mode === "reflect" ? "#f0e6ff" : s.mode === "return" ? "#e6f3ff" : "#eee",
+                                fontSize: "0.75rem",
+                              }}
+                            >
+                              {s.mode ?? "—"}
+                            </span>
+                          </td>
+                          <td style={{ padding: "0.35rem 0.5rem" }}>{s.drive ?? "—"}</td>
+                          <td style={{ padding: "0.35rem 0.5rem", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis" }} title={s.project_name ?? s.project_id ?? ""}>
+                            {s.project_name || (s.project_id ? `${String(s.project_id).slice(0, 8)}…` : "—")}
+                          </td>
+                          <td style={{ padding: "0.35rem 0.5rem", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis" }} title={s.thread_name ?? s.thread_id ?? ""}>
+                            {s.thread_name || (s.thread_id ? `${String(s.thread_id).slice(0, 8)}…` : "—")}
+                          </td>
+                          <td style={{ padding: "0.35rem 0.5rem" }}>
+                            {s.confidence != null ? Number(s.confidence).toFixed(2) : "—"}
+                          </td>
+                          <td style={{ padding: "0.35rem 0.5rem" }}>
+                            {s.outcome_kind ? (
+                              <span
+                                style={{
+                                  fontSize: "0.7rem",
+                                  color: s.outcome_kind === "repetition_without_movement" || s.outcome_kind === "low_signal_continuation" ? "#b33" : "#555",
+                                }}
+                              >
+                                {s.outcome_kind}
+                              </span>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          <td style={{ padding: "0.35rem 0.5rem" }}>
+                            {!s.has_artifact && <span style={{ marginRight: "0.35rem", fontSize: "0.7rem", color: "#888" }}>no-artifact</span>}
+                            {s.proposal_created && <span style={{ marginRight: "0.35rem", fontSize: "0.7rem", color: "#282" }}>proposal</span>}
+                            {intentMatch && <span style={{ fontSize: "0.7rem", color: "#228" }}>intent</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p style={{ fontSize: "0.9rem", color: "#666" }}>No session timeline data yet. Run sessions to see continuity.</p>
+            )}
           </section>
           <section
             style={{

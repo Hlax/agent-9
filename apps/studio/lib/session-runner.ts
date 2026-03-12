@@ -66,6 +66,31 @@ import {
 } from "./trajectory-taste-bias";
 import { createArchiveEntry } from "@twin/memory";
 import { getRuntimeStatePayload } from "@/lib/runtime-state-api";
+import { getSynthesisPressure, type SynthesisPressurePayload } from "@/lib/synthesis-pressure";
+import {
+  getActiveIntent,
+  updateSessionIntent,
+  type ActiveIntent,
+  type IntentUpdateInput,
+} from "@/lib/session-intent";
+
+function buildIntentUpdateInput(state: SessionExecutionState): IntentUpdateInput | null {
+  const result = state.pipelineResult;
+  if (!result) return null;
+  return {
+    sessionId: result.session.session_id,
+    sessionMode: state.sessionMode,
+    selectedProjectId: state.selectedProjectId,
+    selectedThreadId: state.selectedThreadId,
+    selectedIdeaId: state.selectedIdeaId,
+    confidence: state.decisionSummary.confidence,
+    repetitionDetected: state.repetitionDetected,
+    proposalCreated: state.proposalCreated,
+    recurrenceUpdated: state.recurrenceUpdated,
+    returnSuccessTrend: state.synthesisPressure?.components?.return_success_trend,
+    repetitionPenalty: state.synthesisPressure?.components?.repetition_without_movement_penalty,
+  };
+}
 import {
   classifyNarrativeState,
   classifyConfidenceBand,
@@ -212,6 +237,10 @@ interface SessionExecutionState {
   tasteBiasDebug?: TasteBiasPayload | null;
   /** True when a fallback reflection_note artifact was persisted for an otherwise artifactless session. */
   reflectionArtifactCreated?: boolean;
+  /** Synthesis pressure from trajectory (for mode/drive soft bias). Set in loadCreativeStateAndBacklog when supabase is non-null. */
+  synthesisPressure?: SynthesisPressurePayload | null;
+  /** Active session intent (continuity layer). Set in loadCreativeStateAndBacklog when supabase is non-null. */
+  activeIntent?: ActiveIntent | null;
 }
 
 /**
@@ -368,11 +397,46 @@ async function loadCreativeStateAndBacklog(
 ): Promise<SessionExecutionState> {
   const { state: previousState } = await getLatestCreativeState(state.supabase);
   const liveBacklog = await computePublicCurationBacklog(state.supabase);
-  return { ...state, previousState, liveBacklog };
+  const synthesisPressure =
+    state.supabase != null ? await getSynthesisPressure(state.supabase) : null;
+  const activeIntent =
+    state.supabase != null ? await getActiveIntent(state.supabase) : null;
+  return {
+    ...state,
+    previousState,
+    liveBacklog,
+    synthesisPressure: synthesisPressure ?? undefined,
+    activeIntent: activeIntent ?? undefined,
+  };
 }
 
 function selectModeAndDrive(state: SessionExecutionState): SessionExecutionState {
-  const sessionState = { ...state.previousState, public_curation_backlog: state.liveBacklog };
+  let sessionState: CreativeStateFields = { ...state.previousState, public_curation_backlog: state.liveBacklog };
+  // Step 2 (loop closure): soft trajectory bias — low return_success_trend or high repetition penalty nudges reflection_need.
+  if (state.synthesisPressure?.components) {
+    const { return_success_trend, repetition_without_movement_penalty } = state.synthesisPressure.components;
+    const reflectionBias =
+      0.08 * (1 - Math.max(0, return_success_trend)) + 0.05 * Math.min(1, repetition_without_movement_penalty);
+    sessionState = {
+      ...sessionState,
+      reflection_need: Math.min(1, Math.max(0, sessionState.reflection_need + reflectionBias)),
+    };
+  }
+  // Intent continuity: soft bias from active intent (never hard override).
+  if (state.activeIntent) {
+    const k = state.activeIntent.intent_kind;
+    if (k === "reflect") {
+      sessionState = {
+        ...sessionState,
+        reflection_need: Math.min(1, sessionState.reflection_need + 0.06),
+      };
+    } else if (k === "refine" || k === "consolidate") {
+      sessionState = {
+        ...sessionState,
+        recent_exploration_rate: Math.max(0, sessionState.recent_exploration_rate - 0.05),
+      };
+    }
+  }
   const sessionMode = computeSessionMode(sessionState);
   const driveWeights = computeDriveWeights(sessionState);
   const selectedDrive = selectDrive(driveWeights);
@@ -531,7 +595,14 @@ async function selectFocus(state: SessionExecutionState): Promise<SessionExecuti
     }
 
     if (!selectedProjectId && !selectedThreadId && !selectedIdeaId) {
-      const selection = await selectProjectAndThread(supabase);
+      const intentBias =
+        state.activeIntent?.target_project_id || state.activeIntent?.target_thread_id
+          ? {
+              projectId: state.activeIntent.target_project_id ?? undefined,
+              threadId: state.activeIntent.target_thread_id ?? undefined,
+            }
+          : null;
+      const selection = await selectProjectAndThread(supabase, intentBias);
       selectedProjectId = selection.projectId;
       selectedThreadId = selection.ideaThreadId;
       selectedIdeaId = selection.ideaId;
@@ -954,7 +1025,28 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
     }
     // Still attempt trajectory review for no-artifact sessions when persistence exists.
     if (state.supabase && state.pipelineResult) {
+      const supabase = state.supabase;
+      const sessionId = state.pipelineResult.session.session_id;
       state = await persistTrajectoryReview(state);
+      // Intent continuity: update or create active intent after trajectory review.
+      const intentInput = buildIntentUpdateInput(state);
+      if (intentInput) {
+        await updateSessionIntent(supabase, intentInput, state.activeIntent ?? null);
+      }
+      // Step 1 (loop closure): persist creative_state_snapshot so next session sees updated state.
+      const noArtifactSnapshotRow = stateToSnapshotRow(
+        state.previousState,
+        sessionId,
+        null
+      );
+      const { error: noArtifactStateError } = await supabase
+        .from("creative_state_snapshot")
+        .insert(noArtifactSnapshotRow);
+      if (noArtifactStateError) {
+        throw new SessionRunError(500, {
+          error: `No-artifact state snapshot insert failed: ${noArtifactStateError.message}`,
+        });
+      }
     }
     return finalizeResult(state);
   }
@@ -967,12 +1059,19 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
     state = await manageProposals(state);
     state = await writeTraceAndDeliberation(state);
     state = await persistTrajectoryReview(state);
+    // Intent continuity: update or create active intent after trajectory review.
+    const intentInput = buildIntentUpdateInput(state);
+    if (intentInput) {
+      await updateSessionIntent(state.supabase, intentInput, state.activeIntent ?? null);
+    }
   }
   return finalizeResult(state);
 }
 
 /** Confidence below this should stop cron batch (confidence collapse guardrail). */
 const LOW_CONFIDENCE_THRESHOLD = 0.35;
+/** Confidence below this skips creating/updating proposals (loop closure: avoid weak sessions polluting backlog). */
+const PROPOSAL_CONFIDENCE_MIN = 0.4;
 
 function finalizeResult(state: SessionExecutionState): SessionRunSuccessPayload {
   const result = state.pipelineResult;
@@ -1336,6 +1435,8 @@ async function persistDerivedState(state: SessionExecutionState): Promise<Sessio
   }
   memoryRecordCreated = true;
 
+  // Recurrence writeback: same idea/idea_thread IDs used in focus selection get updated so the next
+  // session's selectProjectAndThread (project-thread-selection) can weight them by recurrence_score.
   if (state.selectedIdeaId && evaluation.recurrence_score !== null) {
     const { error: ideaRecurrenceError } = await supabase
       .from("idea")
@@ -1434,6 +1535,22 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
   const evaluation = state.evaluation;
   const critique = state.critique;
   if (!supabase || !artifact || !evaluation || !critique) return state;
+
+  // Step 4 (loop closure): gate weak proposals — do not create/update when confidence is defaulted or below threshold.
+  const confidence = state.decisionSummary.confidence;
+  if (
+    state.confidence_truth === "defaulted" ||
+    (typeof confidence === "number" && confidence < PROPOSAL_CONFIDENCE_MIN)
+  ) {
+    const reason =
+      state.confidence_truth === "defaulted"
+        ? "Proposal skipped: confidence was defaulted (no evaluation)."
+        : `Proposal skipped: confidence ${confidence.toFixed(2)} is below threshold ${PROPOSAL_CONFIDENCE_MIN}.`;
+    return {
+      ...state,
+      decisionSummary: { ...state.decisionSummary, next_action: state.decisionSummary.next_action ?? reason },
+    };
+  }
 
   let { proposalCreated, traceProposalId, traceProposalType, decisionSummary, warnings, proposalOutcome } = state;
 

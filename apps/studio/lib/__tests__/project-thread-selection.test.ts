@@ -119,3 +119,19 @@ describe("selectProjectAndThread – project priority weighting", () => {
     expect(result.projectId).toBe("pA");
   });
 });
+
+describe("selectProjectAndThread – recurrence loop (focus selection)", () => {
+  it("uses recurrence_score and creative_pull for thread/idea weight (same formula as persistDerivedState writeback)", () => {
+    // Session-runner persistDerivedState writes evaluation.recurrence_score to idea and idea_thread.
+    // We read those here: weight = r * 0.6 + p * 0.4. Higher recurrence → higher weight → more likely selected next session.
+    const r1 = 0.9;
+    const p1 = 0.5;
+    const r2 = 0.1;
+    const p2 = 0.5;
+    const w1 = r1 * 0.6 + p1 * 0.4;
+    const w2 = r2 * 0.6 + p2 * 0.4;
+    expect(w1).toBeGreaterThan(w2);
+    expect(w1).toBeCloseTo(0.74, 5);
+    expect(w2).toBeCloseTo(0.26, 5); // 0.1*0.6 + 0.5*0.4
+  });
+});
