@@ -17,6 +17,7 @@ import {
 interface TraceSession {
   session_id: string;
   mode: string | null;
+  metabolism_mode: string | null;
   drive: string | null;
   project: string | null;
   thread: string | null;
@@ -25,6 +26,17 @@ interface TraceSession {
   proposal_id: string | null;
   proposal_type: string | null;
   tokens_used: number | null;
+  // Phase 1: medium resolution
+  requested_medium: string | null;
+  executed_medium: string | null;
+  fallback_reason: string | null;
+  resolution_source: string | null;
+  // Phase 2: capability-fit
+  medium_fit: string | null;
+  missing_capability: string | null;
+  // Phase 3: extension proposals
+  extension_classification: string | null;
+  confidence_truth: number | null;
   created_at: string;
 }
 
@@ -132,6 +144,11 @@ export default async function RuntimeDebugPage() {
               >
                 <div style={{ fontWeight: 600 }}>
                   {s.mode ?? "—"} · {s.drive ?? "—"}
+                  {s.metabolism_mode != null && (
+                    <span style={{ fontWeight: 400, color: "#888", marginLeft: "0.5rem" }}>
+                      [{s.metabolism_mode}]
+                    </span>
+                  )}
                   {s.created_at && (
                     <span style={{ fontWeight: 400, color: "#666", marginLeft: "0.5rem" }}>
                       {new Date(s.created_at).toLocaleString()}
@@ -156,6 +173,34 @@ export default async function RuntimeDebugPage() {
                     <span style={{ marginLeft: "0.5rem", color: "#666" }}>{s.tokens_used} tokens</span>
                   )}
                 </div>
+                {(s.requested_medium != null || s.executed_medium != null || s.fallback_reason != null || s.resolution_source != null || s.medium_fit != null || s.missing_capability != null || s.extension_classification != null || s.confidence_truth != null) && (
+                  <div style={{ marginTop: "0.25rem", fontSize: "0.8rem", color: "#555" }}>
+                    {s.requested_medium != null && (
+                      <span style={{ marginRight: "0.5rem" }}>req: {s.requested_medium}</span>
+                    )}
+                    {s.executed_medium != null && (
+                      <span style={{ marginRight: "0.5rem" }}>exec: {s.executed_medium}</span>
+                    )}
+                    {s.fallback_reason != null && (
+                      <span style={{ marginRight: "0.5rem" }}>fallback: {s.fallback_reason}</span>
+                    )}
+                    {s.resolution_source != null && (
+                      <span style={{ marginRight: "0.5rem" }}>src: {s.resolution_source}</span>
+                    )}
+                    {s.medium_fit != null && (
+                      <span style={{ marginRight: "0.5rem" }}>fit: {s.medium_fit}</span>
+                    )}
+                    {s.missing_capability != null && (
+                      <span style={{ marginRight: "0.5rem" }}>missing: {s.missing_capability}</span>
+                    )}
+                    {s.extension_classification != null && (
+                      <span style={{ marginRight: "0.5rem" }}>ext: {s.extension_classification}</span>
+                    )}
+                    {s.confidence_truth != null && (
+                      <span>conf: {s.confidence_truth}</span>
+                    )}
+                  </div>
+                )}
               </li>
             ))}
           </ul>
