@@ -131,7 +131,7 @@ export function buildConceptFamilies(
     if (memberIds.length === 0) continue;
 
     const sortedMembers = [...memberIds].sort();
-    const familyId = sortedMembers[0];
+    const familyId = sortedMembers[0]!;
 
     // Dominant target surface: most common non-null.
     const surfaceCounts: Record<string, number> = {};
@@ -146,17 +146,6 @@ export function buildConceptFamilies(
       if (count > maxSurfaceCount) {
         maxSurfaceCount = count;
         dominantSurface = surf;
-      }
-    }
-
-    // Representative: newest by createdAt (fallback to lexicographically smallest id).
-    let representative = sortedMembers[0];
-    let bestTs = 0;
-    for (const id of memberIds) {
-      const ts = byId[id]?.createdAt ? Date.parse(byId[id].createdAt as string) : 0;
-      if (ts > bestTs) {
-        bestTs = ts;
-        representative = id;
       }
     }
 
@@ -212,18 +201,19 @@ export function buildConceptFamilies(
         successorHeadCandidates.push(id);
       }
     }
-    const clearSuccessorHead =
-      maxSuccOut >= 1 &&
-      successorHeadCandidates.length === 1 &&
-      (successorIn[successorHeadCandidates[0]] ?? 0) === 0;
+    let clearSuccessorHead = false;
+    if (maxSuccOut >= 1 && successorHeadCandidates.length === 1) {
+      const candidate = successorHeadCandidates[0]!;
+      clearSuccessorHead = (successorIn[candidate] ?? 0) === 0;
+    }
 
-    let representative = sortedMembers[0];
+    let representative: string = sortedMembers[0]!;
     let representativeConfidence: "low" | "medium" | "high" = "low";
     let isContested = false;
     let hasClearSuccessorHead = false;
 
     if (clearSuccessorHead) {
-      representative = successorHeadCandidates[0];
+      representative = successorHeadCandidates[0]!;
       representativeConfidence = "high";
       hasClearSuccessorHead = true;
     } else if (maxSuccOut >= 1 && successorHeadCandidates.length > 1) {
@@ -253,11 +243,11 @@ export function buildConceptFamilies(
       }
       if (bestScore > 0 && bestIds.length > 0) {
         if (bestIds.length === 1) {
-          representative = bestIds[0];
+          representative = bestIds[0]!;
           representativeConfidence = "medium";
         } else {
           let bestTsTie = 0;
-          let chosen = bestIds[0];
+          let chosen = bestIds[0]!;
           for (const id of bestIds) {
             const ts = byId[id]?.createdAt ? Date.parse(byId[id].createdAt as string) : 0;
             if (ts > bestTsTie) {
@@ -283,7 +273,7 @@ export function buildConceptFamilies(
       }
     }
 
-    const needsConsolidation =
+    const needs_consolidation =
       hasManyAlternatives ||
       duplicatePressure ||
       branchCount >= 3 ||
@@ -309,7 +299,7 @@ export function buildConceptFamilies(
       if (lowConfLarge) {
         recReasons.push("Representative confidence is low for a larger family; human selection recommended.");
       }
-    } else if (needsConsolidation) {
+    } else if (needs_consolidation) {
       recommendation = "consolidate_family";
       if (hasManyAlternatives) {
         recReasons.push("Family contains many alternative branches.");
