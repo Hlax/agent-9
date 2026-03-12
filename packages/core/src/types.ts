@@ -202,6 +202,8 @@ export interface ProposalRecord {
   title: string;
   summary: string | null;
   proposal_role?: string | null;
+  /** Kind of change: layout | component | navigation | workflow | visual_system | publishing. */
+  proposal_type?: string | null;
   proposal_state: ApprovalState;
   preview_uri: string | null;
   review_note: string | null;

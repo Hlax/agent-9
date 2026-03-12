@@ -13,7 +13,9 @@ import { mergeHabitatProposalIntoStaging } from "@/lib/staging-composition";
  * - approve_avatar: update identity.embodiment_direction from proposal; moves proposal to approved_for_staging.
  * - approve: legacy Harvey override; set proposal_state to 'approved'.
  * - approve_for_staging: set proposal_state to 'approved_for_staging' (gate: agent may build in staging). Canon: concept_to_proposal_flow.md.
- * - approve_for_publication: set proposal_state to 'approved_for_publication'; for habitat proposals upsert public_habitat_content; for avatar_candidate set identity.active_avatar_artifact_id.
+ * - approve_for_publication: for habitat/concept proposals writes to public_habitat_content and advances
+ *   to 'published'. For avatar_candidate sets active_avatar_artifact_id and advances to 'published'.
+ *   For all other lanes the state is set to 'approved_for_publication' pending a separate publish step.
  */
 export async function POST(
   request: Request,
@@ -61,6 +63,10 @@ export async function POST(
     }
 
     const approvedBy = user?.email ?? "harvey";
+
+    // Track whether a side-effect action actually wrote content to a public surface.
+    // When true, the final proposal state is advanced to 'published' (not just 'approved_for_publication').
+    let contentPublished = false;
 
     // Normalize habitat payload: Supabase may return JSONB as string; support both keys.
     let habitatPayload: unknown =
@@ -164,6 +170,7 @@ export async function POST(
           active_avatar_artifact_id: proposal.artifact_id,
           updated_at: new Date().toISOString(),
         }).eq("identity_id", ident.identity_id);
+        contentPublished = true;
         await writeChangeRecord({
           supabase,
           change_type: "avatar_update",
@@ -221,6 +228,7 @@ export async function POST(
         { slug, title, body, payload_json, updated_at: new Date().toISOString() },
         { onConflict: "slug" }
       );
+      contentPublished = true;
       await writeChangeRecord({
         supabase,
         change_type: "habitat_update",
@@ -246,6 +254,12 @@ export async function POST(
         reason: null,
         approved_by: approvedBy,
       });
+    }
+
+    // When content was actually written to a public surface (habitat upsert or avatar set),
+    // advance the proposal all the way to 'published' so the state machine reflects reality.
+    if (contentPublished && newState === "approved_for_publication") {
+      newState = "published";
     }
 
     const { error: updateErr } = await supabase

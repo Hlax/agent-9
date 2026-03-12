@@ -6,6 +6,16 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseHabitatPayloadForMerge, validateHabitatPayload } from "./habitat-payload";
 
+/**
+ * Proposal states from which a promotion-to-public may advance to 'published'.
+ * Only proposals in these states are eligible for bulk advancement on promotion.
+ */
+const PROMOTABLE_PROPOSAL_STATES = [
+  "approved_for_staging",
+  "staged",
+  "approved_for_publication",
+] as const;
+
 export interface StagingPageRow {
   slug: string;
   title: string | null;
@@ -75,18 +85,30 @@ export async function mergeHabitatProposalIntoStaging(
 /**
  * Promote current staging composition to public (copy staging_habitat_content → public_habitat_content).
  * Records promotion in habitat_promotion_record. Human-only; no runner.
+ * After successful promotion, advances source proposals to 'published' state.
+ * Returns an error if staging composition is empty (nothing to promote).
  */
 export async function promoteStagingToPublic(
   supabase: SupabaseClient,
   promotedBy: string
-): Promise<{ promotionId: string; slugsUpdated: string[]; error?: string }> {
+): Promise<{ promotionId: string; slugsUpdated: string[]; proposalsPublished: number; error?: string }> {
   const { data: stagingRows, error: fetchErr } = await supabase
     .from("staging_habitat_content")
-    .select("slug, title, body, payload_json");
+    .select("slug, title, body, payload_json, source_proposal_id");
   if (fetchErr) {
-    return { promotionId: "", slugsUpdated: [], error: fetchErr.message };
+    return { promotionId: "", slugsUpdated: [], proposalsPublished: 0, error: fetchErr.message };
   }
   const rows = (stagingRows ?? []) as StagingPageRow[];
+
+  if (rows.length === 0) {
+    return {
+      promotionId: "",
+      slugsUpdated: [],
+      proposalsPublished: 0,
+      error: "Staging composition is empty; nothing to promote to public.",
+    };
+  }
+
   const slugsUpdated: string[] = [];
   const now = new Date().toISOString();
   for (const row of rows) {
@@ -101,10 +123,30 @@ export async function promoteStagingToPublic(
       { onConflict: "slug" }
     );
     if (upsertErr) {
-      return { promotionId: "", slugsUpdated, error: upsertErr.message };
+      return { promotionId: "", slugsUpdated, proposalsPublished: 0, error: upsertErr.message };
     }
     slugsUpdated.push(row.slug);
   }
+
+  // Advance source proposals to 'published'. Collect unique non-null proposal IDs
+  // from staging rows, then bulk-update only those in promotable states.
+  const sourceProposalIds = [
+    ...new Set(rows.map((r) => r.source_proposal_id).filter((id): id is string => !!id)),
+  ];
+  let proposalsPublished = 0;
+  if (sourceProposalIds.length > 0) {
+    const { count, error: updateErr } = await supabase
+      .from("proposal_record")
+      .update({ proposal_state: "published", updated_at: now })
+      .in("proposal_record_id", sourceProposalIds)
+      .in("proposal_state", PROMOTABLE_PROPOSAL_STATES)
+      .select("proposal_record_id", { count: "exact", head: true });
+    if (!updateErr) {
+      proposalsPublished = count ?? 0;
+    }
+    // Non-fatal: if updating proposal states fails we still record the promotion.
+  }
+
   const { data: promo, error: insertErr } = await supabase
     .from("habitat_promotion_record")
     .insert({
@@ -116,10 +158,11 @@ export async function promoteStagingToPublic(
     .select("id")
     .single();
   if (insertErr) {
-    return { promotionId: "", slugsUpdated, error: insertErr.message };
+    return { promotionId: "", slugsUpdated, proposalsPublished, error: insertErr.message };
   }
   return {
     promotionId: (promo?.id as string) ?? "",
     slugsUpdated,
+    proposalsPublished,
   };
 }
