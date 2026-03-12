@@ -103,6 +103,27 @@ Backward compatibility: existing `approved` remains valid; new flows use `approv
 
 ---
 
+## 5.1 Proposal resolution lanes
+
+Not all proposals resolve through staging and public. The repo distinguishes three **decision lanes** by `proposal_record.lane_type`:
+
+| Lane | Meaning | Resolution path |
+|------|---------|-----------------|
+| **surface** | User-facing or stageable experience (habitat layout, avatar, naming, interactive module). | **Staging → public.** Only surface proposals can be approved for staging or publication. |
+| **medium** | New expressive capability or production medium (e.g. add interactive medium, add audio). | **Roadmap / specification / later implementation.** Cannot be approved for staging or publication. |
+| **system** | Platform, runtime, or governance behavior change (thresholds, review logic, canon). | **Human governance review / later implementation.** Must not be auto-executed by the runner. |
+
+**Rules:**
+
+- **Only surface lane proposals** can be approved for staging or publication. The approve route rejects `approve_for_staging` and `approve_for_publication` for non-surface proposals with a clear error.
+- **Interactive user-facing modules** (e.g. story_card block, interactive_module proposal role) are **surface** by default: they are stageable and publishable like any other habitat content.
+- **Proposals that suggest a new reusable capability/framework** (e.g. “add an interactive medium”) are **medium** and resolve into roadmap/spec.
+- **Runtime/platform/governance changes** are **system** and resolve into governance review.
+
+Implementation: `lane_type` uses the `approval_lane` enum (`surface`, `medium`, `system`). Extension proposals (e.g. medium_extension) use `lane_type = 'medium'`.
+
+---
+
 ## 6. Data linkage
 
 Run migration `20250310000001_proposal_record_concept_fields.sql` so `proposal_record` has `artifact_id`, `target_surface`, `proposal_type`.

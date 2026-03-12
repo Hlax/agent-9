@@ -27,10 +27,11 @@ export default async function SystemProposalReviewPage({
     <main>
       <h1>System proposals</h1>
       <p>
-        Review Twin proposals for system infrastructure. Approve to record; you implement changes.
+        Review Twin proposals for system infrastructure, runtime, and governance. This is the <strong>system lane</strong>:
+        approving records a human decision; it does <strong>not</strong> publish content.
       </p>
       <p>
-        <Link href="/">← Twin</Link>
+        <Link href="/review">← Review</Link>
       </p>
       <SystemProposalTabs view={view} />
       <section>

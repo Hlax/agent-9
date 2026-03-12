@@ -7,3 +7,49 @@ body {
   padding: 1rem;
   background: #f5f5f5;
 }
+
+/* Studio navigation: horizontal on desktop, stacked on small screens */
+.studio-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  align-items: center;
+}
+
+@media (max-width: 640px) {
+  .studio-nav {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* Review / surface hubs: 3-up grid on desktop, single column on small screens */
+.review-grid,
+.surface-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+}
+
+@media (max-width: 768px) {
+  .review-grid,
+  .surface-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Lane badge next to concept/proposal titles */
+.lane-badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #333;
+  background: #e8e8e8;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}

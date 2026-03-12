@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 
@@ -79,7 +80,7 @@ export function NameProposalList({ view }: { view: "pending_review" | "approved"
     }
   };
 
-  const btn = { padding: "0.25rem 0.5rem", fontSize: "0.8rem", borderRadius: 4 } as const;
+  const btn = { padding: "0.5rem 0.75rem", fontSize: "0.85rem", borderRadius: 4 } as const;
 
   if (loading) return <p>Loading…</p>;
   return (
@@ -91,22 +92,31 @@ export function NameProposalList({ view }: { view: "pending_review" | "approved"
           <li key={p.proposal_record_id} style={{ border: "1px solid #ccc", borderRadius: 8, padding: "1rem", marginBottom: "0.5rem" }}>
             <strong>Proposed name: {p.title}</strong>
             {p.summary && <p style={{ margin: "0.35rem 0 0", fontSize: "0.9rem" }}>{p.summary}</p>}
+            <p style={{ margin: "0.35rem 0 0", fontSize: "0.85rem", color: "#555" }}>
+              <span style={{ fontWeight: 600 }}>Lane:</span> Surface — user-facing change.{" "}
+              <span style={{ fontWeight: 600 }}>Affects:</span> identity name.
+            </p>
             <p style={{ margin: "0.35rem 0 0", fontSize: "0.85rem", color: "#666" }}>{p.proposal_state} · {new Date(p.created_at).toLocaleDateString()}</p>
+            <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.35rem", alignItems: "center" }}>
+              <Link href={`/review/proposals/${p.proposal_record_id}`} style={{ ...btn, display: "inline-block", border: "1px solid #999", background: "#fff", color: "#333", textDecoration: "none" }}>
+                Inspect
+              </Link>
             {p.proposal_state === "pending_review" && (
-              <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+              <>
                 <button type="button" style={btn} onClick={() => handleApplyName(p.proposal_record_id)} disabled={applying === p.proposal_record_id}>
                   {applying === p.proposal_record_id ? "…" : "Apply name"}
                 </button>
                 <button type="button" style={btn} onClick={() => handleReject(p.proposal_record_id)} disabled={archiving === p.proposal_record_id}>Reject</button>
                 <button type="button" style={btn} onClick={() => handleIgnore(p.proposal_record_id)} disabled={archiving === p.proposal_record_id}>Ignore</button>
                 <a href="/identity" style={{ ...btn, display: "inline-block", border: "1px solid #999", background: "#fff", color: "#333", textDecoration: "none" }}>View identity</a>
-              </div>
+              </>
             )}
             {p.proposal_state === "approved" && (
-              <button type="button" style={{ ...btn, marginTop: "0.5rem" }} onClick={() => handleArchive(p.proposal_record_id)} disabled={archiving === p.proposal_record_id}>
+              <button type="button" style={btn} onClick={() => handleArchive(p.proposal_record_id)} disabled={archiving === p.proposal_record_id}>
                 {archiving === p.proposal_record_id ? "…" : "Archive"}
               </button>
             )}
+            </div>
           </li>
         ))}
       </ul>

@@ -49,19 +49,33 @@ export function ConceptProposalActions({ artifactId }: { artifactId: string }) {
   if (eligibility === null) return <span style={{ fontSize: "0.85rem", color: "#888" }}>…</span>;
 
   const hasProposal = createdId ?? eligibility.existingProposalId;
+  const proposalState = eligibility.existingProposalState ?? (hasProposal ? "pending_review" : null);
+
+  const approvedStates = ["approved", "approved_for_staging", "staged", "approved_for_publication", "published"];
+  const archivedStates = ["archived", "rejected", "ignored"];
+  let viewParam: "queue" | "approved" | "archived" = "queue";
+  if (proposalState && approvedStates.includes(proposalState)) {
+    viewParam = "approved";
+  } else if (proposalState && archivedStates.includes(proposalState)) {
+    viewParam = "archived";
+  }
 
   return (
     <span style={{ fontSize: "0.85rem", marginTop: "0.35rem", display: "block" }}>
       {hasProposal ? (
         <>
-          <Link href="/review/surface">View proposal</Link>
-          {eligibility.existingProposalState && ` · ${eligibility.existingProposalState}`}
+          <span style={{ display: "block", marginBottom: "0.15rem", color: "#555" }}>
+            <strong>Lane:</strong> Surface — user-facing change.{" "}
+            <strong>Affects:</strong> habitat (surface proposal).
+          </span>
+          <Link href={`/review/surface/habitat${viewParam === "queue" ? "" : `?view=${viewParam}`}`}>View surface proposal</Link>
+          {proposalState && ` · ${proposalState}`}
         </>
       ) : (
         <>
           {eligibility.eligible ? (
             <>
-              <span style={{ color: "#2a7" }}>Eligible for proposal</span>
+              <span style={{ color: "#2a7" }}>Eligible for surface proposal</span>
               {" · "}
               <button
                 type="button"

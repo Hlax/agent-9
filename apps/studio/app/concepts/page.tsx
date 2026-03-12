@@ -87,7 +87,10 @@ export default async function ConceptsPage({
                   borderRadius: 4,
                 }}
               >
-                <strong>{a.title}</strong>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                  <strong>{a.title}</strong>
+                  <span className="lane-badge">Surface</span>
+                </span>
                 {a.summary && (
                   <p style={{ margin: "0.25rem 0 0", fontSize: "0.9rem", color: "#555" }}>
                     {a.summary}

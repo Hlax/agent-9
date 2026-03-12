@@ -14,7 +14,11 @@ export default async function HabitatProposalReviewPage({
   return (
     <main>
       <h1>Public habitat proposal review</h1>
-      <p>Review staging habitat and public habitat proposals.</p>
+      <p>
+        Review habitat proposals in the <strong>surface lane</strong>. The preferred path is{" "}
+        <strong>approve for staging</strong>, then <strong>Push staging to public</strong>. Direct publish is reserved for
+        exceptions and legacy fixes.
+      </p>
       <p>
         <Link href="/review/surface">← Surface</Link>
       </p>

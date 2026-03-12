@@ -25,17 +25,18 @@ export default async function SurfaceReviewPage() {
     <main>
       <h1>Surface proposals</h1>
       <p>
-        Review name, habitat, and avatar proposals. Separate from artifact approval. Use the links below to open each review queue.
+        Review name, habitat, and avatar proposals in the <strong>surface lane</strong>. These are user-facing experiences that can move into staging and, after review, to public.
+        Separate from artifact approval; this is the content/staging/public path.
       </p>
       <p>
-        <Link href="/">← Twin</Link>
+        <Link href="/review">← Review</Link>
       </p>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "1.5rem", marginTop: "1.5rem" }}>
+      <div className="surface-grid">
         <section style={{ border: "1px solid #ddd", borderRadius: 8, padding: "1rem", display: "flex", flexDirection: "column" }}>
           <h2 style={{ fontSize: "1.1rem", margin: "0 0 0.35rem" }}>Name proposals</h2>
           <p style={{ fontSize: "0.9rem", color: "#555", margin: "0 0 0.75rem", flex: 1 }}>
-            Twin-proposed identity names. Apply to set the canonical name.
+            Twin-proposed identity names in the surface lane. Apply to set the canonical public name.
           </p>
           <Link href="/review/surface/name" style={{ fontWeight: 600, fontSize: "0.95rem" }}>
             Review name proposals →
@@ -58,7 +59,7 @@ export default async function SurfaceReviewPage() {
         <section style={{ border: "1px solid #ddd", borderRadius: 8, padding: "1rem", display: "flex", flexDirection: "column" }}>
           <h2 style={{ fontSize: "1.1rem", margin: "0 0 0.35rem" }}>Habitat proposals</h2>
           <p style={{ fontSize: "0.9rem", color: "#555", margin: "0 0 0.75rem", flex: 1 }}>
-            Public habitat layout and content. Approve for publication when ready.
+            Public habitat layout and content. Approve for <strong>staging</strong>, then push staging to public when ready.
           </p>
           <Link href="/review/surface/habitat" style={{ fontWeight: 600, fontSize: "0.95rem" }}>
             Review habitat proposals →
@@ -81,7 +82,7 @@ export default async function SurfaceReviewPage() {
         <section style={{ border: "1px solid #ddd", borderRadius: 8, padding: "1rem", display: "flex", flexDirection: "column" }}>
           <h2 style={{ fontSize: "1.1rem", margin: "0 0 0.35rem" }}>Avatar candidates</h2>
           <p style={{ fontSize: "0.9rem", color: "#555", margin: "0 0 0.75rem", flex: 1 }}>
-            Avatar or identity mark proposals. Approve to set embodiment direction.
+            Avatar or identity mark proposals in the surface lane. Approve to set embodiment direction (governs how the Twin appears).
           </p>
           <Link href="/review/surface/avatar" style={{ fontWeight: 600, fontSize: "0.95rem" }}>
             Review avatar proposals →

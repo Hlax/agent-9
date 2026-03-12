@@ -99,7 +99,7 @@ export function isLegalArtifactApprovalTransition(
  * Canon: docs/02_runtime/concept_to_proposal_flow.md.
  */
 export const PROPOSAL_STATE_TRANSITIONS: Readonly<Record<string, readonly string[]>> = {
-  pending_review:           ["needs_revision", "approved_for_staging", "archived", "rejected", "ignored"],
+  pending_review:           ["needs_revision", "approved_for_staging", "archived", "rejected", "ignored", "approved"],
   needs_revision:           ["approved_for_staging", "archived", "rejected"],
   approved:                 ["approved_for_staging", "approved_for_publication", "archived", "rejected"],
   approved_for_staging:     ["staged", "approved_for_publication", "archived", "rejected"],

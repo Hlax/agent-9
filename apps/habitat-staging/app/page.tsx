@@ -16,6 +16,11 @@ interface HabitatPayloadLike {
   theme?: unknown;
 }
 
+/** Minimal block shape for staging preview (hero, text, story_card). */
+function isBlock(b: unknown): b is { id: string; type: string; [k: string]: unknown } {
+  return typeof b === "object" && b !== null && "id" in b && "type" in b;
+}
+
 interface ChangeProposal {
   id: string;
   title: string;
@@ -362,6 +367,58 @@ function StatusPill({ status }: { status: ProposalStatus }) {
   );
 }
 
+/** Renders a minimal preview of staging composition blocks (hero, text, story_card). */
+function StagingBlockPreview({ blocks }: { blocks: unknown[] }) {
+  if (!blocks?.length) return null;
+  return (
+    <div style={{ marginTop: "0.75rem", padding: "0.5rem", border: "1px solid #c8e6c9", borderRadius: 6, background: "#fff", fontSize: "0.85rem" }}>
+      <strong style={{ display: "block", marginBottom: "0.35rem" }}>Block preview</strong>
+      {blocks.map((b, i) => {
+        if (!isBlock(b)) return null;
+        if (b.type === "hero") {
+          const headline = typeof b.headline === "string" ? b.headline : "";
+          const sub = typeof b.subheadline === "string" ? b.subheadline : "";
+          return (
+            <div key={b.id ?? i} style={{ marginBottom: "0.5rem", paddingBottom: "0.5rem", borderBottom: "1px solid #eee" }}>
+              <span style={{ color: "#666", fontSize: "0.75rem" }}>hero</span> · {headline || "—"}
+              {sub ? <div style={{ marginTop: "0.2rem", color: "#555" }}>{sub}</div> : null}
+            </div>
+          );
+        }
+        if (b.type === "text") {
+          const content = typeof b.content === "string" ? b.content.slice(0, 120) : "";
+          return (
+            <div key={b.id ?? i} style={{ marginBottom: "0.5rem", paddingBottom: "0.5rem", borderBottom: "1px solid #eee" }}>
+              <span style={{ color: "#666", fontSize: "0.75rem" }}>text</span> · {content || "—"}
+            </div>
+          );
+        }
+        if (b.type === "story_card") {
+          const title = typeof b.title === "string" ? b.title : "";
+          const cards = Array.isArray(b.cards) ? b.cards : [];
+          return (
+            <div key={b.id ?? i} style={{ marginBottom: "0.5rem", paddingBottom: "0.5rem", borderBottom: "1px solid #eee" }}>
+              <span style={{ color: "#666", fontSize: "0.75rem" }}>story_card</span>
+              {title ? <span> · {title}</span> : null}
+              <ul style={{ margin: "0.25rem 0 0", paddingLeft: "1.25rem" }}>
+                {cards.slice(0, 4).map((c: { label?: string; content?: string }, j: number) => (
+                  <li key={j}>{typeof c.label === "string" ? c.label : "—"}: {typeof c.content === "string" ? c.content.slice(0, 60) : ""}</li>
+                ))}
+                {cards.length > 4 ? <li>… +{cards.length - 4} more</li> : null}
+              </ul>
+            </div>
+          );
+        }
+        return (
+          <div key={b.id ?? i} style={{ marginBottom: "0.5rem", paddingBottom: "0.5rem", borderBottom: "1px solid #eee" }}>
+            <span style={{ color: "#666", fontSize: "0.75rem" }}>{b.type}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function BeforeAfterPreview({
   proposal,
   compositionPage,
@@ -425,6 +482,9 @@ function BeforeAfterPreview({
                   Page: {(compositionPage.payload_json as HabitatPayloadLike)?.page ?? "—"} · Blocks: {Array.isArray((compositionPage.payload_json as HabitatPayloadLike)?.blocks) ? ((compositionPage.payload_json as HabitatPayloadLike).blocks!.length) : 0}
                 </p>
               </div>
+              {compositionPage.payload_json && typeof compositionPage.payload_json === "object" && Array.isArray((compositionPage.payload_json as HabitatPayloadLike).blocks) ? (
+                <StagingBlockPreview blocks={(compositionPage.payload_json as HabitatPayloadLike).blocks!} />
+              ) : null}
             </>
           ) : (
             <>

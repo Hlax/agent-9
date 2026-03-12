@@ -100,6 +100,14 @@ const MarqueeBlockSchema = z.object({
   artifactIds: z.array(safeIdRef).max(MAX_ARTIFACTS_PER_BLOCK),
 }).strict();
 
+/** Minimal interactive surface: branching story card (e.g. click-to-reveal cards). */
+const StoryCardBlockSchema = z.object({
+  id: safeIdRef,
+  type: z.literal("story_card"),
+  title: safeString.optional(),
+  cards: z.array(z.object({ label: safeString, content: safeString })).min(1).max(12),
+}).strict();
+
 const HabitatBlockSchema = z.discriminatedUnion("type", [
   HeroBlockSchema,
   TextBlockSchema,
@@ -111,6 +119,7 @@ const HabitatBlockSchema = z.discriminatedUnion("type", [
   AmbientMotifBlockSchema,
   DividerBlockSchema,
   MarqueeBlockSchema,
+  StoryCardBlockSchema,
 ]);
 
 export const HabitatProposalPayloadSchema = z.object({
@@ -134,6 +143,7 @@ export type TimelineBlock = z.infer<typeof TimelineBlockSchema>;
 export type AmbientMotifBlock = z.infer<typeof AmbientMotifBlockSchema>;
 export type DividerBlock = z.infer<typeof DividerBlockSchema>;
 export type MarqueeBlock = z.infer<typeof MarqueeBlockSchema>;
+export type StoryCardBlock = z.infer<typeof StoryCardBlockSchema>;
 
 export type ValidateHabitatPayloadResult =
   | { success: true; data: HabitatProposalPayload }

@@ -29,7 +29,7 @@ export default async function StudioHome() {
     <main>
       <h1>Twin Studio</h1>
       <p>Private operator interface.</p>
-      <nav style={{ display: "flex", gap: "1rem", marginTop: "1rem", flexWrap: "wrap", alignItems: "center" }}>
+      <nav className="studio-nav">
         <Link href="/">Twin</Link>
         <Link href="/session" style={{ padding: "0.35rem 0.75rem", background: "#111", color: "#fff", borderRadius: 6, fontWeight: 600 }}>
           Start
@@ -39,8 +39,7 @@ export default async function StudioHome() {
         <Link href="/session">▶️ Session</Link>
         <Link href="/concepts">💡 Concepts</Link>
         <Link href="/review/artifacts">📋 Artifacts</Link>
-        <Link href="/review/surface">🎭 Surface</Link>
-        <Link href="/review/system">⚙️ System</Link>
+        <Link href="/review">✅ Review</Link>
         <Link href="/runtime">🔍 Runtime</Link>
         <SignOut />
       </nav>

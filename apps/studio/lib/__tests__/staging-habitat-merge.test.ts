@@ -83,6 +83,22 @@ describe("validateHabitatPayload", () => {
     }
   });
 
+  it("accepts payload with story_card block (interactive surface)", () => {
+    const payload = {
+      page: "home",
+      version: 1,
+      blocks: [
+        { id: "sc_1", type: "story_card", title: "Choose a path", cards: [{ label: "A", content: "First option." }, { label: "B", content: "Second option." }] },
+      ],
+    };
+    const result = validateHabitatPayload(payload);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.blocks[0].type).toBe("story_card");
+      expect((result.data.blocks[0] as { cards: { label: string; content: string }[] }).cards).toHaveLength(2);
+    }
+  });
+
   it("rejects payload when version is string", () => {
     const payload = { ...validPayload, version: "1" as unknown as number };
     const result = validateHabitatPayload(payload);

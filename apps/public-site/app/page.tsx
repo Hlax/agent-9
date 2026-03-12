@@ -44,7 +44,8 @@ type HabitatBlock =
   | { id: string; type: "timeline"; title?: string; artifactIds: string[] }
   | { id: string; type: "ambient_motif"; motif: string; intensity?: string }
   | { id: string; type: "divider" }
-  | { id: string; type: "marquee"; title?: string; artifactIds: string[] };
+  | { id: string; type: "marquee"; title?: string; artifactIds: string[] }
+  | { id: string; type: "story_card"; title?: string; cards: { label: string; content: string }[] };
 type HabitatPayload = {
   version: number;
   page: string;
@@ -61,7 +62,7 @@ type HabitatContentResult = {
 
 const ALLOWED_BLOCK_TYPES = new Set([
   "hero", "text", "quote", "artifact_grid", "featured_artifact", "concept_cluster",
-  "timeline", "ambient_motif", "divider", "marquee",
+  "timeline", "ambient_motif", "divider", "marquee", "story_card",
 ]);
 
 function isHabitatBlock(b: unknown): b is HabitatBlock {
@@ -292,6 +293,21 @@ function HabitatBlocks({
       items.push(<section key={block.id} style={{ ...sectionStyle, minHeight: 8 }} aria-hidden />);
     } else if (block.type === "divider") {
       items.push(<hr key={block.id} style={{ margin: "1.5rem 0", border: "none", borderTop: "1px solid #eee" }} />);
+    } else if (block.type === "story_card") {
+      const cards = block.cards ?? [];
+      items.push(
+        <section key={block.id} style={{ ...sectionStyle, border: "1px solid #eee", borderRadius: 8, padding: "1rem" }}>
+          {block.title && <h2 style={{ fontSize: "1.25rem", marginBottom: "0.75rem" }}>{block.title}</h2>}
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {cards.map((card, i) => (
+              <li key={i} style={{ borderBottom: i < cards.length - 1 ? "1px solid #eee" : undefined, padding: "0.75rem 0" }}>
+                <strong style={{ display: "block", marginBottom: "0.25rem" }}>{card.label}</strong>
+                <p style={{ margin: 0, fontSize: "0.95rem", color: "#444" }}>{card.content}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      );
     }
   }
   return <>{items}</>;

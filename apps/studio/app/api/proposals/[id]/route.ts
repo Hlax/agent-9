@@ -14,12 +14,16 @@ const ALLOWED_PROPOSAL_STATES = [
   "published",
 ] as const;
 
+/** States that only surface proposals may enter; medium/system must use approve route (which enforces lane). */
+const SURFACE_ONLY_STATES = ["approved_for_staging", "approved_for_publication", "published"] as const;
+
 /**
  * PATCH /api/proposals/[id] — update proposal state.
  * Body: { proposal_state }.
  * Negative: archived, rejected, ignored, needs_revision.
  * Positive flow (concept-to-proposal): staged, approved_for_staging, approved_for_publication, published.
  * Transition legality is enforced: only canonical forward moves are allowed (B-3).
+ * Lane: only surface proposals may be moved to approved_for_staging, approved_for_publication, or published via PATCH; use /approve for governed path.
  * Exempt paths: /approve (domain side-effects) and /unpublish (privileged rollback).
  */
 export async function PATCH(
@@ -39,7 +43,7 @@ export async function PATCH(
 
     const { data: existing, error: fetchErr } = await supabase
       .from("proposal_record")
-      .select("proposal_record_id, proposal_state")
+      .select("proposal_record_id, proposal_state, lane_type")
       .eq("proposal_record_id", id)
       .single();
     if (fetchErr || !existing) return NextResponse.json({ error: "Proposal not found" }, { status: 404 });
@@ -47,6 +51,20 @@ export async function PATCH(
     if (!isValidProposalTransition(existing.proposal_state, proposal_state)) {
       return NextResponse.json(
         { error: `Cannot transition proposal from '${existing.proposal_state}' to '${proposal_state}'.` },
+        { status: 400 }
+      );
+    }
+
+    const lane = (existing.lane_type ?? "surface") as string;
+    if (
+      (SURFACE_ONLY_STATES as readonly string[]).includes(proposal_state) &&
+      lane !== "surface"
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Only surface proposals may be moved to approved_for_staging, approved_for_publication, or published. Use POST /api/proposals/[id]/approve for the governed path.",
+        },
         { status: 400 }
       );
     }

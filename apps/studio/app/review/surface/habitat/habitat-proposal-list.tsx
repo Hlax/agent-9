@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getNextLegalProposalActions } from "@/lib/governance-rules";
@@ -50,7 +51,7 @@ export function HabitatProposalList({ view }: { view: "pending_review" | "approv
   useEffect(() => {
     setLoading(true);
     fetch(
-      `/api/proposals?lane_type=surface&target_type=public_habitat_proposal,concept&proposal_role=habitat_layout&proposal_state=${view}`
+      `/api/proposals?lane_type=surface&target_type=public_habitat_proposal,concept&proposal_role=habitat_layout,interactive_module&proposal_state=${view}`
     )
       .then((r) => r.json())
       .then((d) => setProposals(d.proposals ?? []))
@@ -158,7 +159,7 @@ export function HabitatProposalList({ view }: { view: "pending_review" | "approv
     }
   };
 
-  const btn = { padding: "0.25rem 0.5rem", fontSize: "0.8rem", borderRadius: 4 } as const;
+  const btn = { padding: "0.5rem 0.75rem", fontSize: "0.85rem", borderRadius: 4 } as const;
 
   if (loading) return <p>Loading…</p>;
   if (proposals.length === 0) return <p>No habitat or concept proposals in this view.</p>;
@@ -170,6 +171,7 @@ export function HabitatProposalList({ view }: { view: "pending_review" | "approv
         const payloadPublished = isPayloadPublished(p.proposal_state);
         const hasPayload = p.habitat_payload_json != null && typeof p.habitat_payload_json === "object";
 
+        const roleLabel = p.proposal_role === "interactive_module" ? "Interactive" : "Layout";
         return (
           <li key={p.proposal_record_id} style={{ border: "1px solid #ccc", borderRadius: 8, padding: "1rem", marginBottom: "0.75rem" }}>
             {p.preview_uri ? (
@@ -180,11 +182,14 @@ export function HabitatProposalList({ view }: { view: "pending_review" | "approv
             <strong>{p.title}</strong>
             {p.summary && <p style={{ margin: "0.35rem 0 0", fontSize: "0.9rem" }}>{p.summary}</p>}
 
-            {/* Proposal role, target surface, current state */}
+            {/* Lane (consistent), Affects, state */}
             <p style={{ margin: "0.5rem 0 0", fontSize: "0.85rem", color: "#444" }}>
-              <span style={{ fontWeight: 600 }}>Role:</span> {p.proposal_role ?? "—"} ·{" "}
-              <span style={{ fontWeight: 600 }}>Target:</span> {p.target_surface ?? "—"} ·{" "}
+              <span style={{ fontWeight: 600 }}>Lane:</span> Surface — user-facing change.{" "}
+              <span style={{ fontWeight: 600 }}>Affects:</span> habitat ({roleLabel}) ·{" "}
               <span style={{ fontWeight: 600 }}>State:</span> {stateLabel(p.proposal_state)}
+            </p>
+            <p style={{ margin: "0.2rem 0 0", fontSize: "0.8rem", color: "#666" }}>
+              Target: {p.target_surface ?? "—"}
             </p>
             <p style={{ margin: "0.2rem 0 0", fontSize: "0.8rem", color: "#666" }}>
               {hasPayload ? "Payload: present" : "Payload: none"} ·{" "}
@@ -194,16 +199,20 @@ export function HabitatProposalList({ view }: { view: "pending_review" | "approv
               {new Date(p.created_at).toLocaleDateString()}
             </p>
 
+            <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.35rem", alignItems: "center" }}>
+              <Link href={`/review/proposals/${p.proposal_record_id}`} style={{ ...btn, display: "inline-block", border: "1px solid #999", background: "#fff", color: "#333", textDecoration: "none" }}>
+                Inspect
+              </Link>
             {/* Pending: primary approve actions */}
             {p.proposal_state === "pending_review" && (
-              <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+              <>
                 <button type="button" style={btn} onClick={() => handleApprove(p.proposal_record_id, p)} disabled={approving === p.proposal_record_id}>
                   {approving === p.proposal_record_id
                     ? "…"
                     : p.target_type === "concept"
                       ? "Approve for staging"
                       : (p.target_surface === "public_habitat" || p.habitat_payload_json)
-                        ? "Approve for publication"
+                        ? "Publish directly (legacy)"
                         : "Approve"}
                 </button>
                 <button type="button" style={btn} onClick={() => handleReject(p.proposal_record_id)} disabled={archiving === p.proposal_record_id}>Reject</button>
@@ -211,12 +220,12 @@ export function HabitatProposalList({ view }: { view: "pending_review" | "approv
                 {p.preview_uri && (
                   <a href={p.preview_uri} target="_blank" rel="noopener noreferrer" style={{ ...btn, display: "inline-block", border: "1px solid #999", background: "#fff", color: "#333", textDecoration: "none" }}>View</a>
                 )}
-              </div>
+              </>
             )}
 
             {/* approved_for_staging / staged: next legal actions */}
             {(p.proposal_state === "approved_for_staging" || p.proposal_state === "staged") && (
-              <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+              <>
                 <span style={{ fontSize: "0.8rem", color: "#666", marginRight: "0.35rem" }}>Next:</span>
                 {nextActions.includes("staged") && (
                   <button
@@ -235,7 +244,7 @@ export function HabitatProposalList({ view }: { view: "pending_review" | "approv
                     onClick={() => handleApproveForPublication(p.proposal_record_id)}
                     disabled={approving === p.proposal_record_id}
                   >
-                    {approving === p.proposal_record_id ? "…" : "Approve for publication"}
+                    {approving === p.proposal_record_id ? "…" : "Publish directly (legacy)"}
                   </button>
                 )}
                 {nextActions.includes("archived") && (
@@ -244,12 +253,12 @@ export function HabitatProposalList({ view }: { view: "pending_review" | "approv
                 {nextActions.includes("rejected") && (
                   <button type="button" style={btn} onClick={() => handleReject(p.proposal_record_id)} disabled={archiving === p.proposal_record_id}>Reject</button>
                 )}
-              </div>
+              </>
             )}
 
             {/* approved_for_publication: unpublish */}
             {p.proposal_state === "approved_for_publication" && (
-              <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+              <>
                 <span style={{ fontSize: "0.8rem", color: "#666", marginRight: "0.35rem" }}>Next:</span>
                 {nextActions.includes("published") && (
                   <span style={{ fontSize: "0.8rem", color: "#666" }}>Publish via separate publish action.</span>
@@ -270,8 +279,9 @@ export function HabitatProposalList({ view }: { view: "pending_review" | "approv
                 >
                   {archiving === p.proposal_record_id ? "…" : "Unpublish + archive"}
                 </button>
-              </div>
+              </>
             )}
+            </div>
           </li>
         );
       })}

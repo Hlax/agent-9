@@ -9,6 +9,11 @@ import { mergeHabitatProposalIntoStaging } from "@/lib/staging-composition";
 /**
  * POST /api/proposals/[id]/approve — approve a proposal and apply it.
  * Body: { action: 'apply_name' | 'approve_avatar' | 'approve' | 'approve_for_staging' | 'approve_for_publication' }.
+ *
+ * Public release semantics (canon): Staging promotion is the canonical path for habitat. Push staging
+ * to public (POST /api/staging/promote) is the primary way to publish. Single-proposal approve_for_publication
+ * that writes directly to public_habitat_content is legacy/emergency only (e.g. one-off fix without full staging).
+ *
  * - apply_name: set active identity.name from proposal title; moves proposal to approved_for_staging.
  * - approve_avatar: update identity.embodiment_direction from proposal; moves proposal to approved_for_staging.
  * - approve: legacy Harvey override; set proposal_state to 'approved'.
@@ -57,6 +62,23 @@ export async function POST(
       return NextResponse.json(
         {
           error: `Cannot transition proposal from '${proposal.proposal_state}' to '${newState}'.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    // Only surface lane proposals can be approved for staging or publication.
+    // Medium (e.g. capability/extension) and system (governance/platform) proposals resolve elsewhere.
+    const lane = (proposal.lane_type ?? "surface") as string;
+    const isStagingOrPublishAction =
+      action === "approve_for_staging" || action === "approve_for_publication" || action === "approve_publication";
+    if (isStagingOrPublishAction && lane !== "surface") {
+      return NextResponse.json(
+        {
+          error:
+            "Only surface lane proposals can be approved for staging or publication. This proposal is in the " +
+            (lane === "medium" ? "medium" : "system") +
+            " lane and resolves via roadmap or governance review.",
         },
         { status: 400 }
       );

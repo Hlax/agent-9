@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
@@ -63,23 +64,31 @@ export function SystemProposalList({ view }: { view: "pending_review" | "approve
         <li key={p.proposal_record_id} style={{ border: "1px solid #ccc", borderRadius: 8, padding: "1rem", marginBottom: "0.5rem" }}>
           <strong>{p.title}</strong>
           <span style={{ fontSize: "0.85rem", color: "#666", marginLeft: "0.5rem" }}>({p.target_type})</span>
+          <p style={{ margin: "0.35rem 0 0", fontSize: "0.85rem", color: "#555" }}>
+            <span style={{ fontWeight: 600 }}>Lane:</span> System — governance and runtime change, not a content publish.
+          </p>
           {p.summary && <p style={{ margin: "0.5rem 0 0", fontSize: "0.9rem" }}>{p.summary}</p>}
           <p style={{ margin: "0.5rem 0 0", fontSize: "0.85rem", color: "#666" }}>{p.proposal_state} · {new Date(p.created_at).toLocaleDateString()}</p>
+          <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
+            <Link href={`/review/proposals/${p.proposal_record_id}`} style={{ padding: "0.5rem 0.75rem", fontSize: "0.85rem", borderRadius: 4, display: "inline-block", border: "1px solid #999", background: "#fff", color: "#333", textDecoration: "none" }}>
+              Inspect
+            </Link>
           {p.proposal_state === "pending_review" && (
-            <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.5rem" }}>
+            <>
               <button type="button" onClick={() => handleApprove(p.proposal_record_id)} disabled={approving === p.proposal_record_id}>
                 {approving === p.proposal_record_id ? "Approving…" : "Approve (record only)"}
               </button>
               <button type="button" onClick={() => handleArchive(p.proposal_record_id)} disabled={archiving === p.proposal_record_id}>
                 {archiving === p.proposal_record_id ? "…" : "Archive"}
               </button>
-            </div>
+            </>
           )}
           {p.proposal_state === "approved" && (
-            <button type="button" onClick={() => handleArchive(p.proposal_record_id)} disabled={archiving === p.proposal_record_id} style={{ marginTop: "0.5rem" }}>
+            <button type="button" onClick={() => handleArchive(p.proposal_record_id)} disabled={archiving === p.proposal_record_id}>
               {archiving === p.proposal_record_id ? "…" : "Archive"}
             </button>
           )}
+          </div>
         </li>
       ))}
     </ul>

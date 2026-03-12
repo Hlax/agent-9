@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
@@ -92,7 +93,7 @@ export function AvatarProposalList({ view }: { view: "pending_review" | "approve
     }
   };
 
-  const btn = { padding: "0.25rem 0.5rem", fontSize: "0.8rem", borderRadius: 4 } as const;
+  const btn = { padding: "0.5rem 0.75rem", fontSize: "0.85rem", borderRadius: 4 } as const;
 
   if (loading) return <p>Loading…</p>;
   if (proposals.length === 0) return <p>No avatar proposals in this view.</p>;
@@ -109,9 +110,17 @@ export function AvatarProposalList({ view }: { view: "pending_review" | "approve
           )}
           <strong>{p.title}</strong>
           {p.summary && <p style={{ margin: "0.35rem 0 0", fontSize: "0.9rem" }}>{p.summary}</p>}
+          <p style={{ margin: "0.35rem 0 0", fontSize: "0.85rem", color: "#555" }}>
+            <span style={{ fontWeight: 600 }}>Lane:</span> Surface — user-facing change.{" "}
+            <span style={{ fontWeight: 600 }}>Affects:</span> avatar embodiment.
+          </p>
           <p style={{ margin: "0.35rem 0 0", fontSize: "0.85rem", color: "#666" }}>{p.proposal_state} · {new Date(p.created_at).toLocaleDateString()}</p>
+          <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.35rem", alignItems: "center" }}>
+            <Link href={`/review/proposals/${p.proposal_record_id}`} style={{ ...btn, display: "inline-block", border: "1px solid #999", background: "#fff", color: "#333", textDecoration: "none" }}>
+              Inspect
+            </Link>
           {p.proposal_state === "pending_review" && (
-            <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+            <>
               <button type="button" style={btn} onClick={() => handleApproveForStaging(p.proposal_record_id)} disabled={approving === p.proposal_record_id}>
                 {approving === p.proposal_record_id ? "…" : "Approve for staging"}
               </button>
@@ -123,7 +132,7 @@ export function AvatarProposalList({ view }: { view: "pending_review" | "approve
               {p.preview_uri && (
                 <a href={p.preview_uri} target="_blank" rel="noopener noreferrer" style={{ ...btn, display: "inline-block", border: "1px solid #999", background: "#fff", color: "#333", textDecoration: "none" }}>View</a>
               )}
-            </div>
+            </>
           )}
           {p.proposal_state === "approved_for_staging" && (
             <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
@@ -136,10 +145,11 @@ export function AvatarProposalList({ view }: { view: "pending_review" | "approve
             </div>
           )}
           {(p.proposal_state === "approved" || p.proposal_state === "approved_for_publication") && (
-            <button type="button" style={{ ...btn, marginTop: "0.5rem" }} onClick={() => handleArchive(p.proposal_record_id)} disabled={archiving === p.proposal_record_id}>
+            <button type="button" style={btn} onClick={() => handleArchive(p.proposal_record_id)} disabled={archiving === p.proposal_record_id}>
               {archiving === p.proposal_record_id ? "…" : "Archive"}
             </button>
           )}
+          </div>
         </li>
       ))}
     </ul>

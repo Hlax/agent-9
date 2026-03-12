@@ -171,6 +171,8 @@ interface SessionExecutionState {
   memoryRecordCreated: boolean;
   traceProposalId: string | null;
   traceProposalType: string | null;
+  /** Why a proposal was or wasn't created this run: created | updated | skipped_cap | skipped_ineligible | skipped_rejected_archived. Null when no proposal path ran. */
+  proposalOutcome: string | null;
   decisionSummary: DecisionSummary;
   warnings: string[];
   executionMode: "auto" | "proposal_only" | "human_required";
@@ -330,6 +332,7 @@ function initializeExecutionState(
     memoryRecordCreated: false,
     traceProposalId: null,
     traceProposalType: null,
+    proposalOutcome: null,
     decisionSummary: {
       project_reason: null,
       thread_reason: null,
@@ -1218,9 +1221,9 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
   const critique = state.critique;
   if (!supabase || !artifact || !evaluation || !critique) return state;
 
-  let { proposalCreated, traceProposalId, traceProposalType, decisionSummary, warnings } = state;
+  let { proposalCreated, traceProposalId, traceProposalType, decisionSummary, warnings, proposalOutcome } = state;
 
-  if (artifact.medium === "concept") {
+    if (artifact.medium === "concept") {
     const eligibility = isProposalEligible({
       medium: artifact.medium,
       alignment_score: evaluation.alignment_score,
@@ -1228,7 +1231,12 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
       pull_score: evaluation.pull_score,
       critique_outcome: critique.critique_outcome,
     });
-    if (eligibility.eligible) {
+    if (!eligibility.eligible) {
+      decisionSummary = { ...decisionSummary, next_action: decisionSummary.next_action ?? eligibility.reason };
+        // Explicitly record why the proposal path was not taken for this concept.
+        // This makes traces easier to interpret without adding new behavior.
+        state = { ...state, proposalOutcome: "skipped_ineligible", decisionSummary };
+    } else {
       const cap = getMaxPendingHabitatLayoutProposals();
       const { data: existingActive } = await supabase
         .from("proposal_record")
@@ -1252,7 +1260,26 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
               "Focus on reviewing existing habitat layout proposals before creating new ones (backlog at cap).",
           };
         }
+        state = { ...state, proposalOutcome: "skipped_cap", decisionSummary };
       } else {
+        // Canon: do not create a new proposal if this artifact already has a rejected/archived proposal (same lane/role).
+        const { data: existingRejected } = await supabase
+          .from("proposal_record")
+          .select("proposal_record_id")
+          .eq("artifact_id", artifact.artifact_id)
+          .eq("lane_type", "surface")
+          .eq("proposal_role", "habitat_layout")
+          .in("proposal_state", ["rejected", "archived"])
+          .limit(1)
+          .maybeSingle();
+        if (existingRejected) {
+          decisionSummary = {
+            ...decisionSummary,
+            next_action:
+              decisionSummary.next_action ?? "Proposal not created: a prior proposal for this concept was rejected or archived.",
+          };
+          state = { ...state, proposalOutcome: "skipped_rejected_archived", decisionSummary };
+        } else {
         const minimalPayload = buildMinimalHabitatPayloadFromConcept(artifact.title, artifact.summary);
         const validated = validateHabitatPayload(minimalPayload);
         const hasPayload = validated.success;
@@ -1276,6 +1303,8 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
                 title: artifact.title,
                 summary,
                 habitat_payload_json: hasPayload ? (validated.data as object) : null,
+                artifact_id: artifact.artifact_id,
+                target_id: artifact.artifact_id,
                 updated_at: new Date().toISOString(),
               })
               .eq("proposal_record_id", newest.proposal_record_id);
@@ -1285,6 +1314,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
               warnings = [...warnings, msg];
             } else {
               proposalCreated = true;
+              proposalOutcome = "updated";
             }
 
             if (older.length > 0) {
@@ -1348,6 +1378,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
             traceProposalId = insertedHabitat.proposal_record_id as string;
             traceProposalType = "surface";
             proposalCreated = true;
+            proposalOutcome = "created";
             decisionSummary = {
               ...decisionSummary,
               next_action:
@@ -1355,6 +1386,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
                 "Create or refine a habitat layout proposal for the staging habitat from this concept.",
             };
           }
+        }
         }
       }
     }
@@ -1426,8 +1458,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
     }
   }
 
-  // Phase 3: extension proposal — creation-only; no apply in runner. lane_type = system is temporary
-  // reuse; extension proposals are identified by target_type = extension and extension-classified proposal_role.
+  // Phase 3: extension proposal — creation-only; no apply in runner. Medium lane: resolves to roadmap/spec, not staging/public.
   if (isExtensionProposalEligible(state)) {
     const extensionCap = getMaxPendingExtensionProposals();
     const EXTENSION_PROPOSAL_ROLES = [
@@ -1440,7 +1471,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
     const { count: pendingExtensionCount } = await supabase
       .from("proposal_record")
       .select("proposal_record_id", { count: "exact", head: true })
-      .eq("lane_type", "system")
+      .eq("lane_type", "medium")
       .in("proposal_role", EXTENSION_PROPOSAL_ROLES)
       .eq("proposal_state", "pending_review");
     const pending = pendingExtensionCount ?? 0;
@@ -1454,7 +1485,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
       const { data: existingForArtifact } = await supabase
         .from("proposal_record")
         .select("proposal_record_id")
-        .eq("lane_type", "system")
+        .eq("lane_type", "medium")
         .eq("proposal_role", state.extension_classification!)
         .eq("artifact_id", artifact!.artifact_id)
         .eq("proposal_state", "pending_review")
@@ -1472,7 +1503,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
           ? `Extension proposal (operator review only; no apply in runner). ${bodySummary}`
           : "Extension proposal (operator review only; no apply in runner).";
         const extensionRow = {
-          lane_type: "system" as const,
+          lane_type: "medium" as const,
           target_type: "extension" as const,
           target_id: artifact!.artifact_id,
           artifact_id: artifact!.artifact_id,
@@ -1519,6 +1550,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
     proposalCreated,
     traceProposalId,
     traceProposalType,
+    proposalOutcome: proposalOutcome ?? state.proposalOutcome,
     decisionSummary,
     warnings,
   };
@@ -1600,6 +1632,7 @@ async function writeTraceAndDeliberation(
     missing_capability: state.missing_capability ?? null,
     extension_classification: state.extension_classification ?? null,
     confidence_truth: state.confidence_truth ?? null,
+    proposal_outcome: state.proposalOutcome ?? null,
   };
   const { error: traceUpdateError } = await supabase
     .from("creative_session")

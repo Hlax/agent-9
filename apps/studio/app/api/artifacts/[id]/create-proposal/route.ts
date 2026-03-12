@@ -33,13 +33,23 @@ export async function POST(
     }
 
     const body = await request.json().catch(() => ({}));
-    const lane_type = (body?.lane_type === "system" ? "system" : "surface") as "surface" | "system";
+    const lane_type = (body?.lane_type === "system" ? "system" : body?.lane_type === "medium" ? "medium" : "surface") as "surface" | "system" | "medium";
     const target_surface = typeof body?.target_surface === "string" ? body.target_surface : "staging_habitat";
     const proposal_type = typeof body?.proposal_type === "string" ? body.proposal_type : "layout";
+    const proposal_role =
+      typeof body?.proposal_role === "string" && body.proposal_role.trim()
+        ? body.proposal_role.trim()
+        : "habitat_layout";
+
+    // Interactive user-facing habitat modules are always surface lane.
+    // Medium-lane interactive capabilities should use a different role (e.g. medium_extension).
+    const effectiveLane: "surface" | "system" | "medium" =
+      proposal_role === "interactive_module" ? "surface" : lane_type;
 
     let habitat_payload_json: object | null = null;
     let summary: string = capSummaryTo200Words(artifact.summary) || artifact.title || "Concept proposal";
-    if (target_surface === "public_habitat" && body?.habitat_payload != null) {
+    const hasPayload = body?.habitat_payload != null && (target_surface === "public_habitat" || target_surface === "staging_habitat");
+    if (hasPayload) {
       const result = validateHabitatPayload(body.habitat_payload);
       if (!result.success) {
         return NextResponse.json({ error: "Invalid habitat payload", details: result.error }, { status: 400 });
@@ -49,7 +59,7 @@ export async function POST(
     }
 
     const row = {
-      lane_type,
+      lane_type: effectiveLane === "medium" ? "medium" : effectiveLane === "system" ? "system" : "surface",
       target_type: "concept",
       target_id: artifactId,
       artifact_id: artifactId,
@@ -58,6 +68,7 @@ export async function POST(
       proposal_state: "pending_review",
       target_surface,
       proposal_type,
+      proposal_role,
       habitat_payload_json,
       preview_uri: null,
       review_note: null,
