@@ -42,6 +42,19 @@ import { detectRepetition } from "@/lib/repetition-detection";
 import { addTokenUsage, getRuntimeConfig } from "@/lib/runtime-config";
 import { isLegalProposalStateTransition } from "@/lib/governance-rules";
 import { writeDeliberationTrace } from "./deliberation-trace";
+import { deriveTrajectoryReview } from "./trajectory-review";
+import {
+  scoreReturnCandidates,
+  buildReturnSelectionDebug,
+  type ArchiveCandidateRow,
+  type RankedCandidate,
+} from "./return-intelligence";
+import {
+  getTasteBiasMap,
+  applyTasteBias,
+  fillTastePayloadSelected,
+  type TasteBiasPayload,
+} from "./trajectory-taste-bias";
 import { createArchiveEntry } from "@twin/memory";
 import {
   classifyNarrativeState,
@@ -156,6 +169,14 @@ interface SessionExecutionState {
   /** Explicit preferMedium from options (overrides derived when set). */
   preferMedium: PreferredMedium | null;
   promptContext: string | null;
+  /** Debug score breakdown for return-mode archive selection (focus-selection only). */
+  returnSelectionDebug?: {
+    selected: RankedCandidate | null;
+    topCandidates: RankedCandidate[];
+    tensionKinds: string[];
+  } | null;
+  /** Debug for trajectory taste bias (soft action-scoring preference). */
+  tasteBiasDebug?: TasteBiasPayload | null;
 }
 
 /**
@@ -252,6 +273,7 @@ function initializeExecutionState(
     isCron,
     preferMedium: preferMedium ?? null,
     promptContext: promptContext ?? null,
+    returnSelectionDebug: undefined,
     previousState: defaultCreativeState(),
     liveBacklog: 0,
     sessionMode: "explore",
@@ -325,36 +347,88 @@ async function selectFocus(state: SessionExecutionState): Promise<SessionExecuti
     if (sessionMode === "return") {
       const { data: archives } = await supabase
         .from("archive_entry")
-        .select("project_id, idea_thread_id, idea_id, recurrence_score, creative_pull, created_at")
+        .select("project_id, idea_thread_id, idea_id, artifact_id, recurrence_score, creative_pull, created_at")
         .order("created_at", { ascending: false })
         .limit(50);
 
       if (archives && archives.length > 0) {
         archiveCandidateAvailable = true;
         const nowMs = Date.now();
-        const decayHalfLifeDays = getArchiveDecayHalfLifeDays();
-        const weights = archives.map((row) => {
-          const r = (row.recurrence_score as number | null) ?? 0.5;
-          const p = (row.creative_pull as number | null) ?? 0.5;
-          const base = r * 0.6 + p * 0.4;
-          const created = row.created_at ? new Date(row.created_at as string).getTime() : nowMs;
-          const daysSince = (nowMs - created) / (24 * 60 * 60 * 1000);
-          const recency = 1 / (1 + daysSince / decayHalfLifeDays);
-          return base * recency;
-        });
-        const total = weights.reduce((a, b) => a + b, 0) || 1;
-        let acc = 0;
-        const r = Math.random();
-        let chosenIndex = 0;
-        for (let i = 0; i < archives.length; i++) {
-          acc += weights[i]! / total;
-          if (r <= acc) {
-            chosenIndex = i;
-            break;
+        const artifactIds = archives
+          .map((r) => r.artifact_id as string | null)
+          .filter((id): id is string => Boolean(id));
+        const artifactMediumByArtifactId: Record<string, string> = {};
+        if (artifactIds.length > 0) {
+          const { data: artifacts } = await supabase
+            .from("artifact")
+            .select("artifact_id, medium")
+            .in("artifact_id", artifactIds);
+          if (artifacts) {
+            for (const a of artifacts) {
+              const id = a.artifact_id as string;
+              const medium = a.medium as string;
+              if (id && medium) artifactMediumByArtifactId[id] = medium;
+            }
           }
-          chosenIndex = i;
         }
-        const chosen = archives[chosenIndex];
+        const hasCritiqueByArtifactId = new Set<string>();
+        if (artifactIds.length > 0) {
+          const { data: critiques } = await supabase
+            .from("critique_record")
+            .select("artifact_id")
+            .in("artifact_id", artifactIds);
+          if (critiques) {
+            for (const c of critiques) {
+              const id = c.artifact_id as string;
+              if (id) hasCritiqueByArtifactId.add(id);
+            }
+          }
+        }
+        const ontologyStateForReturn: OntologyState = {
+          sessionMode: "return",
+          selectedDrive: state.selectedDrive,
+          selectionSource: "archive",
+          liveBacklog: state.liveBacklog,
+          previousState: {
+            reflection_need: state.previousState.reflection_need,
+            public_curation_backlog: state.previousState.public_curation_backlog,
+            idea_recurrence: state.previousState.idea_recurrence,
+            avatar_alignment: state.previousState.avatar_alignment,
+          },
+          repetitionDetected: false,
+          archiveCandidateAvailable: true,
+          selectedIdeaId: null,
+          proposalCreated: false,
+          traceProposalType: null,
+        };
+        const tensionKinds = deriveTensionKinds(ontologyStateForReturn);
+        const candidates: ArchiveCandidateRow[] = archives.map((row) => ({
+          project_id: (row.project_id as string | null) ?? null,
+          idea_thread_id: (row.idea_thread_id as string | null) ?? null,
+          idea_id: (row.idea_id as string | null) ?? null,
+          artifact_id: (row.artifact_id as string | null) ?? null,
+          recurrence_score: (row.recurrence_score as number | null) ?? null,
+          creative_pull: (row.creative_pull as number | null) ?? null,
+          created_at: (row.created_at as string | null) ?? null,
+        }));
+        const result = scoreReturnCandidates(candidates, {
+          tensionKinds,
+          artifactMediumByArtifactId,
+          hasCritiqueByArtifactId,
+          nowMs,
+        });
+
+        const { tasteByActionKind, payload: tastePayload } = await getTasteBiasMap(supabase);
+        const ACTION_KIND_RETURN = "resurface_archive";
+        const rankedWithTaste = result.ranked.map((r) => ({
+          ...r,
+          adjustedScore: applyTasteBias(r.breakdown.return_score, ACTION_KIND_RETURN, tasteByActionKind),
+        }));
+        rankedWithTaste.sort((a, b) => b.adjustedScore - a.adjustedScore);
+        const selectedIndexAfterTaste = rankedWithTaste[0]?.index ?? result.selectedIndex;
+        const chosen = archives[selectedIndexAfterTaste];
+        const tasteBiasPayload = fillTastePayloadSelected(tastePayload, ACTION_KIND_RETURN);
+
         if (chosen) {
           selectedProjectId = (chosen.project_id as string | null) ?? null;
           selectedThreadId = (chosen.idea_thread_id as string | null) ?? null;
@@ -363,20 +437,47 @@ async function selectFocus(state: SessionExecutionState): Promise<SessionExecuti
           decisionSummary = {
             ...decisionSummary,
             project_reason:
-              "Return session: selected project from archive entries weighted by recurrence, pull, and recency.",
+              "Return session: selected archive entry via Return Intelligence and trajectory taste bias (tension, recurrence, critique, age, exploration, taste).",
             thread_reason:
               "Thread comes from chosen archive entry with unresolved or paused work.",
             idea_reason: selectedIdeaId
               ? "Selected idea linked to the chosen thread, biased toward higher recurrence and pull when available."
               : "No specific idea was selected; session used project/thread and identity/context only.",
             rejected_alternatives: [
-              "Other archive entries had lower combined recurrence, pull, or were older.",
+              "Other archive entries had lower adjusted score (return_score + taste bias).",
             ],
           };
+          const debugPayload = buildReturnSelectionDebug(
+            { ranked: result.ranked, selectedIndex: selectedIndexAfterTaste },
+            tensionKinds,
+            5
+          );
+          state = { ...state, returnSelectionDebug: debugPayload, tasteBiasDebug: tasteBiasPayload };
           console.log("[session] selection: return_from_archive", {
             archive_project: selectedProjectId,
             archive_thread: selectedThreadId,
             archive_idea: selectedIdeaId,
+            return_intelligence: {
+              tensionKinds: debugPayload.tensionKinds,
+              selected_score: debugPayload.selected?.breakdown.return_score,
+              selected_breakdown: debugPayload.selected?.breakdown,
+              top_scores: debugPayload.topCandidates.map((r) => ({
+                index: r.index,
+                return_score: r.breakdown.return_score,
+                tension_alignment: r.breakdown.tension_alignment,
+                recurrence_weight: r.breakdown.recurrence_weight,
+                critique_weight: r.breakdown.critique_weight,
+                age_weight: r.breakdown.age_weight,
+                exploration_noise: r.breakdown.exploration_noise,
+              })),
+            },
+            taste_bias: {
+              recent_window_size: tasteBiasPayload.recent_window_size,
+              taste_by_action_kind: tasteBiasPayload.taste_by_action_kind,
+              applied_bias_for_selected: tasteBiasPayload.applied_bias_for_selected,
+              selected_action_kind: tasteBiasPayload.selected_action_kind,
+              sparse_fallback_used: tasteBiasPayload.sparse_fallback_used,
+            },
           });
         }
       }
@@ -553,6 +654,7 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
     state = await persistDerivedState(state);
     state = await manageProposals(state);
     state = await writeTraceAndDeliberation(state);
+    state = await persistTrajectoryReview(state);
   }
   return finalizeResult(state);
 }
@@ -1263,5 +1365,89 @@ async function writeTraceAndDeliberation(
   }
 
   return { ...state, metabolismMode };
+}
+
+/**
+ * Persist one trajectory_review row (post-session diagnostic). Inserted after
+ * writeTraceAndDeliberation, before finalizeResult. Does not fail the session
+ * on insert failure — appends a warning and returns state unchanged.
+ * Governance, proposal FSMs, and public mutation behavior are unchanged.
+ */
+async function persistTrajectoryReview(
+  state: SessionExecutionState
+): Promise<SessionExecutionState> {
+  const supabase = state.supabase;
+  const result = state.pipelineResult;
+  const artifact = state.primaryArtifact;
+  const critique = state.critique;
+  if (!supabase || !result || !artifact || !critique) return state;
+
+  const ontologyState: OntologyState = {
+    sessionMode: state.sessionMode,
+    selectedDrive: state.selectedDrive,
+    selectionSource: state.selectionSource,
+    liveBacklog: state.liveBacklog,
+    previousState: {
+      reflection_need: state.previousState.reflection_need,
+      public_curation_backlog: state.previousState.public_curation_backlog,
+      idea_recurrence: state.previousState.idea_recurrence,
+      avatar_alignment: state.previousState.avatar_alignment,
+    },
+    repetitionDetected: state.repetitionDetected,
+    archiveCandidateAvailable: state.archiveCandidateAvailable,
+    selectedIdeaId: state.selectedIdeaId,
+    proposalCreated: state.proposalCreated,
+    traceProposalType: state.traceProposalType,
+  };
+  const narrativeState = classifyNarrativeState(ontologyState);
+  const actionKind = classifyActionKind(ontologyState);
+
+  let deliberationTraceId: string | null = null;
+  const { data: traceRow } = await supabase
+    .from("deliberation_trace")
+    .select("deliberation_trace_id")
+    .eq("session_id", result.session.session_id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (traceRow?.deliberation_trace_id) {
+    deliberationTraceId = traceRow.deliberation_trace_id as string;
+  }
+
+  const input = {
+    narrative_state: narrativeState,
+    action_kind: actionKind,
+    confidence: state.decisionSummary.confidence,
+    proposal_created: state.proposalCreated,
+    repetition_detected: state.repetitionDetected,
+    has_artifact: true,
+    has_critique: true,
+    has_evaluation: Boolean(state.evaluation),
+    memory_record_created: state.memoryRecordCreated,
+    archive_entry_created: state.archiveEntryCreated,
+    live_backlog: state.liveBacklog,
+    selection_source: state.selectionSource,
+    execution_mode: state.executionMode,
+    previous_curation_backlog: state.previousState.public_curation_backlog,
+    previous_reflection_need: state.previousState.reflection_need,
+    previous_avatar_alignment: state.previousState.avatar_alignment,
+  };
+
+  const row = deriveTrajectoryReview(
+    result.session.session_id,
+    deliberationTraceId,
+    input
+  );
+
+  const { error } = await supabase.from("trajectory_review").insert({
+    ...row,
+    created_at: new Date().toISOString(),
+  });
+  if (error) {
+    const msg = `trajectory_review insert failed: ${error.message}`;
+    console.warn("[session]", msg, { session_id: result.session.session_id });
+    return { ...state, warnings: [...state.warnings, msg] };
+  }
+  return state;
 }
 

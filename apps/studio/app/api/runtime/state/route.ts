@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { getRuntimeConfig } from "@/lib/runtime-config";
+import { getSynthesisPressure } from "@/lib/synthesis-pressure";
 
 /**
- * GET /api/runtime/state — latest creative_state_snapshot, backlog, runtime config, and introspection fields.
+ * GET /api/runtime/state — latest creative_state_snapshot, backlog, runtime config, synthesis_pressure, and introspection fields.
  */
 export async function GET() {
   const supabase = getSupabaseServer();
@@ -11,7 +12,7 @@ export async function GET() {
     return NextResponse.json({ snapshot: null, backlog: null, return_candidates: 0 });
   }
 
-  const [stateRes, artifactBacklogRes, proposalBacklogRes, archiveCountRes, runtimeConfig, latestSessionRes] =
+  const [stateRes, artifactBacklogRes, proposalBacklogRes, archiveCountRes, runtimeConfig, latestSessionRes, synthesisPressurePayload] =
     await Promise.all([
       supabase
         .from("creative_state_snapshot")
@@ -36,6 +37,7 @@ export async function GET() {
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle(),
+      getSynthesisPressure(supabase),
     ]);
 
   const { data: snapshot, error: stateError } = stateRes;
@@ -96,6 +98,7 @@ export async function GET() {
       creative_state,
       active_project,
       active_thread,
+      synthesis_pressure: synthesisPressurePayload,
     });
   }
 
@@ -110,6 +113,7 @@ export async function GET() {
     creative_state,
     active_project,
     active_thread,
+    synthesis_pressure: synthesisPressurePayload,
   });
 }
 
