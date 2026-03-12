@@ -37,8 +37,29 @@
 
 ---
 
+## System proposals — initiation rule
+
+**System proposals are always human-initiated.**
+
+The creative runner does not create proposals with `lane_type = "system"`. This is by design:
+
+- System proposals affect platform, runtime, or governance behavior — changes that require deliberate human judgment, not autonomous generation.
+- The runner signals capability gaps through `lane_type = "medium"` extension proposals (e.g. `medium_extension`, `toolchain_extension`). These surface to operator review without implying any governance change.
+- If a session condition (e.g. repeated low confidence, stalled narrative, critical capability gap) warrants a governance-level review, the operator initiates a system proposal manually. The runner's trace and trajectory review provide the evidence; the proposal itself is a human act.
+
+**Runner creation authority by lane:**
+
+| Lane | Runner may create? | How |
+|------|--------------------|-----|
+| surface | Yes | `manageProposals` — habitat_layout, avatar_candidate |
+| medium | Yes | `manageProposals` — extension proposals when `isExtensionProposalEligible` |
+| system | **No** | Human-initiated only via Studio UI or direct DB insert |
+
+---
+
 ## Implementation
 
 - `proposal_record.lane_type` ∈ { surface, medium, system } (from `approval_lane` enum).
 - Approve route: for actions `approve_for_staging` and `approve_for_publication`, if `lane_type !== 'surface'` the route returns 400.
 - Extension proposals (e.g. medium_extension) use `lane_type = 'medium'`.
+- The creative runner contains no code path that creates a proposal with `lane_type = 'system'`. This constraint is intentional and must not be changed without Harvey approval.
