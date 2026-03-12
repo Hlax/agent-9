@@ -121,6 +121,46 @@ export async function getRuntimeStatePayload(supabase: SupabaseClient | null) {
   };
 }
 
+/**
+ * Maps a raw creative_session row (with its trace JSON) to the shape returned by
+ * getRuntimeTracePayload. Exported so it can be unit-tested independently of
+ * the Supabase client.
+ */
+export function mapSessionTraceRow(row: {
+  session_id: string;
+  trace: Record<string, unknown> | null;
+  decision_summary: Record<string, unknown> | null;
+  created_at: string;
+}) {
+  const t = row.trace ?? {};
+  return {
+    session_id: row.session_id,
+    // session_mode is the canonical trace field written by writeTraceAndDeliberation
+    mode: (t as Record<string, unknown>).session_mode ?? null,
+    metabolism_mode: (t as Record<string, unknown>).metabolism_mode ?? null,
+    drive: (t as Record<string, unknown>).drive ?? null,
+    project: (t as Record<string, unknown>).project_name ?? null,
+    thread: (t as Record<string, unknown>).thread_name ?? null,
+    idea: (t as Record<string, unknown>).idea_summary ?? null,
+    artifact_id: (t as Record<string, unknown>).artifact_id ?? null,
+    proposal_id: (t as Record<string, unknown>).proposal_id ?? null,
+    proposal_type: (t as Record<string, unknown>).proposal_type ?? null,
+    tokens_used: (t as Record<string, unknown>).tokens_used ?? null,
+    // Phase 1: medium resolution observability
+    requested_medium: (t as Record<string, unknown>).requested_medium ?? null,
+    executed_medium: (t as Record<string, unknown>).executed_medium ?? null,
+    fallback_reason: (t as Record<string, unknown>).fallback_reason ?? null,
+    resolution_source: (t as Record<string, unknown>).resolution_source ?? null,
+    // Phase 2: capability-fit classification
+    medium_fit: (t as Record<string, unknown>).medium_fit ?? null,
+    missing_capability: (t as Record<string, unknown>).missing_capability ?? null,
+    // Phase 3: extension proposal diagnostics
+    extension_classification: (t as Record<string, unknown>).extension_classification ?? null,
+    confidence_truth: (t as Record<string, unknown>).confidence_truth ?? null,
+    created_at: row.created_at,
+  };
+}
+
 export async function getRuntimeTracePayload(supabase: SupabaseClient | null) {
   if (!supabase) return { sessions: [] };
   const { data: rows, error } = await supabase
@@ -129,30 +169,7 @@ export async function getRuntimeTracePayload(supabase: SupabaseClient | null) {
     .order("created_at", { ascending: false })
     .limit(10);
   if (error) return { sessions: [], error: error.message };
-  const sessions = (rows ?? []).map(
-    (row: {
-      session_id: string;
-      trace: Record<string, unknown> | null;
-      decision_summary: Record<string, unknown> | null;
-      created_at: string;
-    }) => {
-      const t = row.trace ?? {};
-      const d = row.decision_summary ?? {};
-      return {
-        session_id: row.session_id,
-        mode: (t as Record<string, unknown>).mode ?? null,
-        drive: (t as Record<string, unknown>).drive ?? null,
-        project: (t as Record<string, unknown>).project_name ?? null,
-        thread: (t as Record<string, unknown>).thread_name ?? null,
-        idea: (t as Record<string, unknown>).idea_summary ?? null,
-        artifact_id: (t as Record<string, unknown>).artifact_id ?? null,
-        proposal_id: (t as Record<string, unknown>).proposal_id ?? null,
-        proposal_type: (t as Record<string, unknown>).proposal_type ?? null,
-        tokens_used: (t as Record<string, unknown>).tokens_used ?? null,
-        created_at: row.created_at,
-      };
-    }
-  );
+  const sessions = (rows ?? []).map(mapSessionTraceRow);
   return { sessions };
 }
 
