@@ -4,7 +4,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { validateHabitatPayload } from "./habitat-payload";
+import { parseHabitatPayloadForMerge, validateHabitatPayload } from "./habitat-payload";
 
 export interface StagingPageRow {
   slug: string;
@@ -17,8 +17,9 @@ export interface StagingPageRow {
 
 /**
  * Merge a single habitat proposal into staging_habitat_content (per-page replace).
- * Call when a proposal is approved_for_staging and has valid habitat_payload_json.
- * Returns true if merge was applied; false if payload invalid or not habitat.
+ * Supports real payload shape: page (string slug), blocks (array), version (optional number).
+ * If full validation passes we use it; otherwise we accept minimal merge shape (page + blocks).
+ * Returns true if merge was applied; false if payload invalid. Do not advance proposal state when false.
  */
 export async function mergeHabitatProposalIntoStaging(
   supabase: SupabaseClient,
@@ -26,19 +27,40 @@ export async function mergeHabitatProposalIntoStaging(
   habitatPayloadJson: unknown,
   proposalTitle?: string | null
 ): Promise<{ applied: boolean; slug?: string; error?: string }> {
-  const result = validateHabitatPayload(habitatPayloadJson);
-  if (!result.success) {
-    return { applied: false, error: result.error };
+  const raw =
+    typeof habitatPayloadJson === "string"
+      ? (() => {
+          try {
+            return JSON.parse(habitatPayloadJson) as unknown;
+          } catch {
+            return habitatPayloadJson;
+          }
+        })()
+      : habitatPayloadJson;
+
+  let slug: string;
+  let payloadForStaging: object;
+
+  const fullResult = validateHabitatPayload(raw);
+  if (fullResult.success) {
+    slug = fullResult.data.page;
+    payloadForStaging = fullResult.data as object;
+  } else {
+    const minimalResult = parseHabitatPayloadForMerge(raw);
+    if ("error" in minimalResult) {
+      return { applied: false, error: minimalResult.error };
+    }
+    slug = minimalResult.slug;
+    payloadForStaging = minimalResult.payload;
   }
-  const payload = result.data;
-  const slug = payload.page;
+
   const now = new Date().toISOString();
   const { error } = await supabase.from("staging_habitat_content").upsert(
     {
       slug,
-      title: proposalTitle ?? payload.page,
+      title: proposalTitle ?? slug,
       body: null,
-      payload_json: payload as object,
+      payload_json: payloadForStaging,
       source_proposal_id: proposalRecordId,
       updated_at: now,
     },

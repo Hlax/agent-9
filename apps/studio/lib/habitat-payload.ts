@@ -163,6 +163,45 @@ export function validateHabitatPayload(
   return { success: true, data: parsed.data };
 }
 
+/**
+ * Minimal merge-time payload shape: page (string slug), blocks (array). Used when full schema
+ * validation fails but payload is mergeable (e.g. version as string, or extra block fields).
+ */
+const MIN_MERGE_PAYLOAD_BYTES = 50_000;
+
+export function parseHabitatPayloadForMerge(raw: unknown): { slug: string; payload: object } | { error: string } {
+  if (raw === null || raw === undefined) {
+    return { error: "Payload is null or undefined" };
+  }
+  let obj: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      obj = JSON.parse(raw) as unknown;
+    } catch {
+      return { error: "Payload string is not valid JSON" };
+    }
+  }
+  if (typeof obj !== "object" || obj === null || Array.isArray(obj)) {
+    return { error: "Payload must be an object" };
+  }
+  const o = obj as Record<string, unknown>;
+  const page = o.page;
+  if (typeof page !== "string" || page.trim() === "") {
+    return { error: "Payload must have a non-empty string 'page' (slug)" };
+  }
+  const blocks = o.blocks;
+  if (!Array.isArray(blocks)) {
+    return { error: "Payload must have a 'blocks' array" };
+  }
+  const str = JSON.stringify(obj);
+  if (str.length > MIN_MERGE_PAYLOAD_BYTES) {
+    return { error: `Payload exceeds ${MIN_MERGE_PAYLOAD_BYTES} bytes` };
+  }
+  const slug = page.trim();
+  const payload: object = { ...o, page: slug } as object;
+  return { slug, payload };
+}
+
 /** Collect all artifact IDs referenced in a payload (for validation against approved/public set). */
 export function collectArtifactIdsFromPayload(payload: HabitatProposalPayload): string[] {
   const ids: string[] = [];

@@ -62,22 +62,37 @@ export async function POST(
 
     const approvedBy = user?.email ?? "harvey";
 
+    // Normalize habitat payload: Supabase may return JSONB as string; support both keys.
+    let habitatPayload: unknown =
+      proposal.habitat_payload_json ?? (proposal as Record<string, unknown>).habitatPayloadJson;
+    if (typeof habitatPayload === "string") {
+      try {
+        habitatPayload = JSON.parse(habitatPayload) as unknown;
+      } catch {
+        habitatPayload = null;
+      }
+    }
+
     // Branch model: approve_for_staging for habitat proposals merges into staging composition.
     const isHabitatForStaging =
       action === "approve_for_staging" &&
-      proposal.habitat_payload_json != null &&
-      typeof proposal.habitat_payload_json === "object" &&
+      habitatPayload != null &&
+      typeof habitatPayload === "object" &&
       (proposal.target_surface === "staging_habitat" || proposal.target_type === "concept");
     if (isHabitatForStaging) {
       const mergeResult = await mergeHabitatProposalIntoStaging(
         supabase,
         id,
-        proposal.habitat_payload_json,
+        habitatPayload,
         proposal.title
       );
-      if (!mergeResult.applied && mergeResult.error) {
+      if (!mergeResult.applied) {
         return NextResponse.json(
-          { error: `Staging merge failed: ${mergeResult.error}` },
+          {
+            error: mergeResult.error
+              ? `Staging merge failed: ${mergeResult.error}`
+              : "Staging merge failed; proposal state was not advanced.",
+          },
           { status: 400 }
         );
       }
@@ -171,8 +186,8 @@ export async function POST(
       const body = proposal.summary ?? null;
       let payload_json: object | null = null;
 
-      if (proposal.habitat_payload_json && typeof proposal.habitat_payload_json === "object") {
-        const result = validateHabitatPayload(proposal.habitat_payload_json);
+      if (habitatPayload != null && typeof habitatPayload === "object") {
+        const result = validateHabitatPayload(habitatPayload);
         if (!result.success) {
           return NextResponse.json(
             { error: "Habitat payload invalid for publication", details: result.error },
