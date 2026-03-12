@@ -2,15 +2,21 @@
  * GET /api/cron/session — scheduler entrypoint.
  * Intended to be called by Vercel Cron (Authorization: Bearer ${CRON_SECRET})
  * and optionally by manual callers with header x-cron-secret.
- * If always_on is enabled and interval elapsed, triggers a session run.
+ * If always_on is enabled and interval elapsed, acquires runtime lock and runs
+ * up to MAX_SESSIONS_PER_WAKE sessions sequentially; stops early on guardrails or 45s limit.
  */
 import { NextResponse } from "next/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { getRuntimeConfig, setLastRunAt, setRuntimeConfig, getIntervalMs, getSessionsRunInLastHour } from "@/lib/runtime-config";
 import { getLowTokenThreshold, getMaxSessionsPerHour } from "@/lib/stop-limits";
 import { runSessionInternal, SessionRunError } from "@/lib/session-runner";
+import { tryAcquireRuntimeLock, releaseRuntimeLock, LOCK_LEASE_MINUTES } from "@/lib/runtime-lock";
+import type { SessionRunSuccessPayload } from "@/lib/session-runner";
 
 const CRON_SECRET_HEADER = "x-cron-secret";
+
+const MAX_SESSIONS_PER_WAKE = 5;
+const MAX_RUNTIME_DURATION_MS = 45_000;
 
 function getLastRunMs(lastRunAt: string | null): number {
   if (!lastRunAt) return 0;
@@ -140,8 +146,6 @@ export async function GET(request: Request) {
     });
   }
 
-  console.log("[cron/session] session run started");
-
   // C-1: Hourly session rate-limit guard.
   const maxSessionsPerHour = getMaxSessionsPerHour();
   if (maxSessionsPerHour > 0 && supabase) {
@@ -155,66 +159,95 @@ export async function GET(request: Request) {
     }
   }
 
-  try {
-    const payload = await runSessionInternal({
-      createdBy: "harvey",
-      isCron: true,
-      promptContext: null,
-      preferMedium: null,
+  const ownerId = crypto.randomUUID();
+  const lockResult = await tryAcquireRuntimeLock(supabase, ownerId, LOCK_LEASE_MINUTES);
+  if (!lockResult.acquired) {
+    console.log("[cron/session] skipped: lock held by another runner");
+    return NextResponse.json({
+      skipped: true,
+      reason: "lock_held",
+      mode: config.mode,
     });
+  }
 
-    if (supabase) {
-      console.log("[cron/session] updating last_run_at");
-      await setLastRunAt(supabase, new Date().toISOString());
+  const startTime = Date.now();
+  const sessions: Array<{ session_id: string; artifact_count: number; artifact_medium?: string | null }> = [];
+  let lastPayload: SessionRunSuccessPayload | null = null;
+  let runError: { status: number; payload: unknown } | null = null;
+  let guardrailStop: string | null = null;
+
+  try {
+    console.log("[cron/session] lock acquired; running up to", MAX_SESSIONS_PER_WAKE, "sessions");
+
+    for (let i = 0; i < MAX_SESSIONS_PER_WAKE; i++) {
+      if (Date.now() - startTime >= MAX_RUNTIME_DURATION_MS) {
+        console.log("[cron/session] hard stop: max runtime duration reached");
+        break;
+      }
+
+      try {
+        const payload = await runSessionInternal({
+          createdBy: "harvey",
+          isCron: true,
+          promptContext: null,
+          preferMedium: null,
+        });
+
+        lastPayload = payload;
+        if (supabase) {
+          await setLastRunAt(supabase, new Date().toISOString());
+        }
+
+        sessions.push({
+          session_id: payload.session_id,
+          artifact_count: payload.artifact_count,
+          artifact_medium: payload.artifact_medium,
+        });
+        console.log(`[Runtime] Session ${i + 1}/${MAX_SESSIONS_PER_WAKE} complete`, {
+          session_id: payload.session_id,
+          artifact_count: payload.artifact_count,
+        });
+
+        if (payload.guardrail_stop) {
+          guardrailStop = payload.guardrail_stop;
+          console.log("[cron/session] guardrail stop", { guardrail_stop: payload.guardrail_stop });
+          break;
+        }
+      } catch (e) {
+        if (e instanceof SessionRunError) {
+          runError = { status: e.status, payload: e.payload };
+          console.error("[cron/session] session runner error (stopping batch)", {
+            status: e.status,
+            error: e.payload,
+          });
+        } else {
+          runError = { status: 500, payload: { error: e instanceof Error ? e.message : "Session run failed" } };
+          console.error("[cron/session] unexpected error (stopping batch)", {
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+        break;
+      }
     }
 
-    console.log("[cron/session] session run succeeded", {
-      session_id: payload.session_id,
-      artifact_count: payload.artifact_count,
-    });
+    const lastSession = lastPayload
+      ? {
+          session_id: lastPayload.session_id,
+          artifact_count: lastPayload.artifact_count,
+          artifact_medium: lastPayload.artifact_medium,
+        }
+      : sessions[sessions.length - 1] ?? null;
 
     return NextResponse.json({
       triggered: true,
       mode: config.mode,
-      session: {
-        session_id: payload.session_id,
-        artifact_count: payload.artifact_count,
-        artifact_medium: payload.artifact_medium,
-      },
+      sessions_run: sessions.length,
+      sessions,
+      session: lastSession,
+      ...(guardrailStop && { guardrail_stop: guardrailStop }),
+      ...(runError && { run_status: runError.status, run_error: runError.payload }),
     });
-  } catch (e) {
-    if (supabase) {
-      // Do NOT advance last_run_at on failure; cron should retry next interval.
-      console.error("[cron/session] session run failed (no last_run_at update)", {
-        error: e instanceof Error ? e.message : String(e),
-      });
-    }
-
-    if (e instanceof SessionRunError) {
-      console.error("[cron/session] session runner failed", {
-        status: e.status,
-        error: e.payload,
-      });
-      return NextResponse.json(
-        {
-          triggered: true,
-          run_status: e.status,
-          run_error: e.payload,
-        },
-        { status: 200 }
-      );
-    }
-
-    console.error("[cron/session] session runner failed with unexpected error", {
-      error: e instanceof Error ? e.message : String(e),
-    });
-    return NextResponse.json(
-      {
-        triggered: true,
-        run_status: 500,
-        run_error: { error: "Session run failed" },
-      },
-      { status: 200 }
-    );
+  } finally {
+    await releaseRuntimeLock(supabase);
   }
 }

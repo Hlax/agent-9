@@ -104,6 +104,8 @@ export interface SessionRunSuccessPayload {
   memory_record_created?: boolean;
   /** Non-empty when any soft (non-fatal) operation failed during the session. */
   warnings: string[];
+  /** Set when orchestrator should stop running more sessions this wake (cron batch). */
+  guardrail_stop?: "no_eligible_work" | "repetition" | "low_confidence" | "governance_gate" | null;
 }
 
 export class SessionRunError extends Error {
@@ -856,6 +858,9 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
   return finalizeResult(state);
 }
 
+/** Confidence below this should stop cron batch (confidence collapse guardrail). */
+const LOW_CONFIDENCE_THRESHOLD = 0.35;
+
 function finalizeResult(state: SessionExecutionState): SessionRunSuccessPayload {
   const result = state.pipelineResult;
   const artifact = state.primaryArtifact;
@@ -866,6 +871,21 @@ function finalizeResult(state: SessionExecutionState): SessionRunSuccessPayload 
       : artifact?.medium
         ? "other"
         : null;
+
+  let guardrail_stop: SessionRunSuccessPayload["guardrail_stop"] = null;
+  if (state.repetitionDetected) {
+    guardrail_stop = "repetition";
+  } else if (state.executionMode === "human_required" && state.humanGateReason) {
+    guardrail_stop = "governance_gate";
+  } else if (
+    typeof state.decisionSummary.confidence === "number" &&
+    state.decisionSummary.confidence < LOW_CONFIDENCE_THRESHOLD
+  ) {
+    guardrail_stop = "low_confidence";
+  } else if (artifactCount === 0 && state.pipelineResult) {
+    guardrail_stop = "no_eligible_work";
+  }
+
   return {
     session_id: result?.session.session_id ?? "",
     artifact_count: artifactCount,
@@ -880,6 +900,7 @@ function finalizeResult(state: SessionExecutionState): SessionRunSuccessPayload 
     proposal_created: state.proposalCreated,
     memory_record_created: state.memoryRecordCreated,
     warnings: state.warnings,
+    guardrail_stop: guardrail_stop ?? undefined,
   };
 }
 
