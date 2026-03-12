@@ -48,7 +48,7 @@ import {
   getArchiveDecayHalfLifeDays,
 } from "@/lib/stop-limits";
 import { detectRepetition } from "@/lib/repetition-detection";
-import { addTokenUsage, getRuntimeConfig } from "@/lib/runtime-config";
+import * as runtimeConfigModule from "@/lib/runtime-config";
 import { isLegalProposalStateTransition } from "@/lib/governance-rules";
 import { writeDeliberationTrace } from "./deliberation-trace";
 import { deriveTrajectoryReview } from "./trajectory-review";
@@ -65,7 +65,6 @@ import {
   type TasteBiasPayload,
 } from "./trajectory-taste-bias";
 import { createArchiveEntry } from "@twin/memory";
-import { getRuntimeConfig } from "@/lib/runtime-config";
 import { getRuntimeStatePayload } from "@/lib/runtime-state-api";
 import {
   classifyNarrativeState,
@@ -1367,7 +1366,7 @@ async function persistDerivedState(state: SessionExecutionState): Promise<Sessio
 
   const tokensUsedForRecord =
     "tokensUsed" in result && typeof result.tokensUsed === "number" ? result.tokensUsed : 0;
-  if (tokensUsedForRecord > 0) await addTokenUsage(supabase, tokensUsedForRecord);
+  if (tokensUsedForRecord > 0) await runtimeConfigModule.addTokenUsage(supabase, tokensUsedForRecord);
 
   if (!decisionSummary.next_action) {
     if (state.sessionMode === "return") {
@@ -1780,7 +1779,7 @@ async function writeTraceAndDeliberation(
   const critique = state.critique;
   if (!supabase || !result || !artifact || !critique) return state;
 
-  const runtimeConfig = await getRuntimeConfig(supabase);
+  const runtimeConfig = await runtimeConfigModule.getRuntimeConfig(supabase);
   const metabolismMode = runtimeConfig.mode;
   const ontologyState: OntologyState = {
     sessionMode: state.sessionMode,
