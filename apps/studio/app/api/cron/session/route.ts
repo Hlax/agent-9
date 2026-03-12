@@ -7,8 +7,15 @@
  */
 import { NextResponse } from "next/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
-import { getRuntimeConfig, setLastRunAt, setRuntimeConfig, getIntervalMs, getSessionsRunInLastHour } from "@/lib/runtime-config";
-import { getLowTokenThreshold, getMaxSessionsPerHour } from "@/lib/stop-limits";
+import {
+  getRuntimeConfig,
+  setLastRunAt,
+  setRuntimeConfig,
+  getIntervalMs,
+  getSessionsRunInLastHour,
+  getMaxSessionsPerHour,
+} from "@/lib/runtime-config";
+import { getLowTokenThreshold } from "@/lib/stop-limits";
 import { runSessionInternal, SessionRunError } from "@/lib/session-runner";
 import { tryAcquireRuntimeLock, releaseRuntimeLock, LOCK_LEASE_MINUTES } from "@/lib/runtime-lock";
 import type { SessionRunSuccessPayload } from "@/lib/session-runner";
@@ -167,7 +174,7 @@ export async function GET(request: Request) {
   }
 
   // C-1: Hourly session rate-limit guard.
-  const maxSessionsPerHour = getMaxSessionsPerHour();
+  const maxSessionsPerHour = getMaxSessionsPerHour(config.mode);
   let hourlyCount = 0;
   if (maxSessionsPerHour > 0 && supabase) {
     hourlyCount = await getSessionsRunInLastHour(supabase);

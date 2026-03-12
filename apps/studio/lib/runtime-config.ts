@@ -137,3 +137,19 @@ export function getIntervalMs(mode: RuntimeMode): number {
       return 60 * 1000; // 1 min
   }
 }
+
+/** Max creative_session rows allowed per rolling 1-hour window, by runtime mode. 0 = no cap. */
+export function getMaxSessionsPerHour(mode: RuntimeMode): number {
+  switch (mode) {
+    case "slow":
+      return 4;
+    case "steady":
+      return 12;
+    case "default":
+      return 20;
+    case "turbo":
+      return 30;
+    default:
+      return 12;
+  }
+}
