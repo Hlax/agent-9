@@ -7,15 +7,16 @@
  *  - approve_for_staging and approve_for_publication still map to their correct states.
  *  - The legacy "approve" action still maps to "approved".
  *  - The FSM guard blocks truly invalid transitions before side effects can run.
+ *  - When content is actually written to a public surface (habitat upsert / avatar set),
+ *    the final proposal state is advanced to 'published' (not left at 'approved_for_publication').
  */
 
 import { describe, it, expect } from "vitest";
 import { isLegalProposalStateTransition } from "../governance-rules";
 
 /**
- * Mirror the action → newState mapping from the approve route so that changes
- * to the route are caught here. This function is a pure restatement of the
- * route's mapping logic; it must be kept in sync with the route.
+ * Mirror the action → FSM gate state from the approve route.
+ * This is the state used for the legality check BEFORE side effects run.
  */
 function resolveNewState(action: string): string {
   if (action === "approve_for_staging") return "approved_for_staging";
@@ -23,6 +24,16 @@ function resolveNewState(action: string): string {
   if (action === "approve") return "approved";
   // Default for apply_name, approve_avatar and any unrecognised action.
   return "approved_for_staging";
+}
+
+/**
+ * Mirror the final state resolution: when contentPublished is true and the gate
+ * state was 'approved_for_publication', the route advances to 'published'.
+ */
+function resolveFinalState(action: string, contentPublished: boolean): string {
+  const gateState = resolveNewState(action);
+  if (contentPublished && gateState === "approved_for_publication") return "published";
+  return gateState;
 }
 
 describe("approve route: action → state mapping", () => {
@@ -106,5 +117,43 @@ describe("approve route: transition guard runs before side effects (FSM contract
 
   it("guard returns true for pending_review → approved_for_staging (apply_name / approve_avatar path)", () => {
     expect(isLegalProposalStateTransition("pending_review", "approved_for_staging")).toBe(true);
+  });
+});
+
+describe("approve route: final state resolution (contentPublished flag)", () => {
+  it("approve_for_publication with content published → final state is 'published'", () => {
+    expect(resolveFinalState("approve_for_publication", true)).toBe("published");
+  });
+
+  it("approve_publication alias with content published → final state is 'published'", () => {
+    expect(resolveFinalState("approve_publication", true)).toBe("published");
+  });
+
+  it("approve_for_publication without content published → final state is 'approved_for_publication'", () => {
+    expect(resolveFinalState("approve_for_publication", false)).toBe("approved_for_publication");
+  });
+
+  it("approve_for_staging always → final state is 'approved_for_staging' regardless of contentPublished", () => {
+    expect(resolveFinalState("approve_for_staging", true)).toBe("approved_for_staging");
+    expect(resolveFinalState("approve_for_staging", false)).toBe("approved_for_staging");
+  });
+
+  it("legacy approve always → final state is 'approved' regardless of contentPublished", () => {
+    expect(resolveFinalState("approve", true)).toBe("approved");
+    expect(resolveFinalState("approve", false)).toBe("approved");
+  });
+
+  it("FSM allows approved_for_staging → approved_for_publication (gate check before side effects)", () => {
+    const gateState = resolveNewState("approve_for_publication");
+    expect(isLegalProposalStateTransition("approved_for_staging", gateState)).toBe(true);
+  });
+
+  it("FSM allows staged → approved_for_publication (gate check before side effects)", () => {
+    const gateState = resolveNewState("approve_for_publication");
+    expect(isLegalProposalStateTransition("staged", gateState)).toBe(true);
+  });
+
+  it("approved_for_publication → published is a valid FSM transition (promotion path)", () => {
+    expect(isLegalProposalStateTransition("approved_for_publication", "published")).toBe(true);
   });
 });
