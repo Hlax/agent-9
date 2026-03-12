@@ -208,6 +208,8 @@ interface SessionExecutionState {
   } | null;
   /** Debug for trajectory taste bias (soft action-scoring preference). */
   tasteBiasDebug?: TasteBiasPayload | null;
+  /** True when a fallback reflection_note artifact was persisted for an otherwise artifactless session. */
+  reflectionArtifactCreated?: boolean;
 }
 
 /**
@@ -347,6 +349,7 @@ function initializeExecutionState(
     executionMode: "auto",
     humanGateReason: null,
     metabolismMode: "manual",
+    reflectionArtifactCreated: false,
     requested_medium: null,
     executed_medium: null,
     fallback_reason: null,
@@ -838,8 +841,11 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
   state = await buildContexts(state);
   state = await runGeneration(state);
   if (!state.primaryArtifact || !state.pipelineResult) {
+    // Cron-triggered sessions that would otherwise leave no artifact: persist session + reflection_note artifact.
+    if (state.supabase && state.pipelineResult && state.isCron) {
+      state = await persistSessionAndReflectionArtifact(state);
+    }
     // Still attempt trajectory review for no-artifact sessions when persistence exists.
-    // persistTrajectoryReview will no-op if there is no session to attach the row to.
     if (state.supabase && state.pipelineResult) {
       state = await persistTrajectoryReview(state);
     }
@@ -864,9 +870,14 @@ const LOW_CONFIDENCE_THRESHOLD = 0.35;
 function finalizeResult(state: SessionExecutionState): SessionRunSuccessPayload {
   const result = state.pipelineResult;
   const artifact = state.primaryArtifact;
-  const artifactCount = result ? (result.artifacts ?? []).length : 0;
-  const artifactMedium: PreferredMedium | "other" | null =
-    artifact && (artifact.medium === "image" || artifact.medium === "writing" || artifact.medium === "concept")
+  const artifactCount = state.reflectionArtifactCreated
+    ? 1
+    : result
+      ? (result.artifacts ?? []).length
+      : 0;
+  const artifactMedium: PreferredMedium | "other" | null = state.reflectionArtifactCreated
+    ? "writing"
+    : artifact && (artifact.medium === "image" || artifact.medium === "writing" || artifact.medium === "concept")
       ? artifact.medium
       : artifact?.medium
         ? "other"
@@ -902,6 +913,81 @@ function finalizeResult(state: SessionExecutionState): SessionRunSuccessPayload 
     warnings: state.warnings,
     guardrail_stop: guardrail_stop ?? undefined,
   };
+}
+
+/**
+ * Persist session and a single internal reflection artifact when the run would otherwise produce no artifact.
+ * Used for cron-triggered reflective / critique-heavy sessions so they leave durable, visible output.
+ * Artifact is writing + artifact_role reflection_note, private and archived (non-staging).
+ */
+async function persistSessionAndReflectionArtifact(
+  state: SessionExecutionState
+): Promise<SessionExecutionState> {
+  const supabase = state.supabase;
+  const result = state.pipelineResult;
+  if (!supabase || !result) return state;
+
+  const now = new Date().toISOString();
+  const sessionRow = {
+    session_id: result.session.session_id,
+    project_id: state.selectedProjectId ?? result.session.project_id,
+    mode: result.session.mode,
+    selected_drive: result.session.selected_drive,
+    title: result.session.title,
+    prompt_context: result.session.prompt_context,
+    reflection_notes: result.session.reflection_notes,
+    started_at: result.session.started_at,
+    ended_at: result.session.ended_at ?? now,
+    created_at: result.session.created_at,
+    updated_at: now,
+  };
+  const { error: sessionError } = await supabase.from("creative_session").insert(sessionRow);
+  if (sessionError) {
+    console.warn("[session-runner] reflection path: session insert failed", { error: sessionError.message });
+    return state;
+  }
+
+  const reflectionArtifactId = crypto.randomUUID();
+  const modeLabel = result.session.mode ?? "unknown";
+  const summary =
+    result.session.reflection_notes?.trim() ||
+    `Session completed with no generative artifact. Mode: ${modeLabel}.`;
+  const artifactRow = {
+    artifact_id: reflectionArtifactId,
+    project_id: state.selectedProjectId ?? result.session.project_id,
+    session_id: result.session.session_id,
+    primary_idea_id: state.selectedIdeaId ?? null,
+    primary_thread_id: state.selectedThreadId ?? null,
+    title: "Reflection note",
+    summary: summary.slice(0, 2000),
+    medium: "writing",
+    lifecycle_status: "draft",
+    current_approval_state: "archived",
+    current_publication_state: "private",
+    content_text: summary.slice(0, 10000),
+    content_uri: null,
+    preview_uri: null,
+    notes: null,
+    alignment_score: null,
+    emergence_score: null,
+    fertility_score: null,
+    pull_score: null,
+    recurrence_score: null,
+    artifact_role: "reflection_note",
+    created_at: now,
+    updated_at: now,
+  };
+  const { error: artifactError } = await supabase.from("artifact").insert(artifactRow);
+  if (artifactError) {
+    console.warn("[session-runner] reflection path: artifact insert failed", { error: artifactError.message });
+    return state;
+  }
+  console.log("[session-runner] fallback_reflection_artifact_created", {
+    session_id: result.session.session_id,
+    artifact_id: reflectionArtifactId,
+    mode: modeLabel,
+  });
+  return { ...state, reflectionArtifactCreated: true };
 }
 
 async function persistCoreOutputs(state: SessionExecutionState): Promise<SessionExecutionState> {

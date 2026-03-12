@@ -14,6 +14,7 @@ const ROLE_FILTERS = [
   { role: "all", label: "All" },
   { role: "layout_concept", label: "Layout concepts" },
   { role: "image_concept", label: "Image concepts" },
+  { role: "reflection_note", label: "Reflection notes" },
 ] as const;
 
 /**
