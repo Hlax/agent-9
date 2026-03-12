@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { OntologyPanel, type OntologySummaryProps } from "./ontology-panel";
+
+export const dynamic = "force-dynamic";
 import { ContinuityHistory } from "./continuity-history";
 import { HealthPanel } from "./health-panel";
 import { buildRuntimeHealthSummary } from "@/lib/runtime-health";

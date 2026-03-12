@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { getRuntimeDeliberationPayload } from "@/lib/runtime-state-api";
 
+export const dynamic = "force-dynamic";
+
 /**
  * GET /api/runtime/deliberation — latest deliberation_trace row.
  * Internal introspection endpoint; not for public surfaces.

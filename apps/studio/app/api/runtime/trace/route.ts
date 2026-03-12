@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { getRuntimeTracePayload } from "@/lib/runtime-state-api";
 
+export const dynamic = "force-dynamic";
+
 /**
  * GET /api/runtime/trace — last 10 sessions with trace (decision chain) for Twin introspection.
  */

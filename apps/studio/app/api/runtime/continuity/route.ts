@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { getRuntimeContinuityPayload } from "@/lib/runtime-state-api";
 
+export const dynamic = "force-dynamic";
+
 /**
  * GET /api/runtime/continuity — recent session ontology continuity view.
  * Internal-only; returns shaped rows and aggregates for operator inspection.
