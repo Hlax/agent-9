@@ -38,7 +38,11 @@ export function MetabolismPanel() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/runtime/state")
+    const url =
+      typeof window !== "undefined"
+        ? `${window.location.origin}/api/runtime/state`
+        : "/api/runtime/state";
+    fetch(url)
       .then((r) => r.json())
       .then((body) => {
         setSnapshot(body.snapshot ?? null);

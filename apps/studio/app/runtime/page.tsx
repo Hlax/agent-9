@@ -1,8 +1,16 @@
 import Link from "next/link";
-import { OntologyPanel } from "./ontology-panel";
+import { OntologyPanel, type OntologySummaryProps } from "./ontology-panel";
 import { ContinuityHistory } from "./continuity-history";
 import { HealthPanel } from "./health-panel";
 import { buildRuntimeHealthSummary } from "@/lib/runtime-health";
+import type { ContinuitySessionRow, ContinuityAggregateSummary } from "@/lib/runtime-continuity";
+import { getSupabaseServer } from "@/lib/supabase-server";
+import {
+  getRuntimeStatePayload,
+  getRuntimeTracePayload,
+  getRuntimeDeliberationPayload,
+  getRuntimeContinuityPayload,
+} from "@/lib/runtime-state-api";
 
 interface TraceSession {
   session_id: string;
@@ -19,18 +27,21 @@ interface TraceSession {
 }
 
 async function fetchRuntimeState() {
-  const base = process.env.NEXT_PUBLIC_STUDIO_BASE_URL ?? "";
+  const supabase = getSupabaseServer();
   const [stateRes, traceRes, deliberationRes, continuityRes] = await Promise.all([
-    fetch(`${base}/api/runtime/state`, { cache: "no-store" }).then((r) => r.json()),
-    fetch(`${base}/api/runtime/trace`, { cache: "no-store" }).then((r) => r.json()),
-    fetch(`${base}/api/runtime/deliberation`, { cache: "no-store" }).then((r) => r.json()),
-    fetch(`${base}/api/runtime/continuity`, { cache: "no-store" }).then((r) => r.json()),
+    getRuntimeStatePayload(supabase),
+    getRuntimeTracePayload(supabase),
+    getRuntimeDeliberationPayload(supabase),
+    getRuntimeContinuityPayload(supabase),
   ]);
   return {
     state: stateRes as Record<string, unknown> | null,
     traces: traceRes as { sessions: TraceSession[] } | null,
-    deliberation: deliberationRes as { trace: any } | null,
-    continuity: continuityRes as { sessions: any[]; summary: any } | null,
+    deliberation: deliberationRes as { trace: unknown } | null,
+    continuity: continuityRes as {
+      sessions: ContinuitySessionRow[];
+      summary: ContinuityAggregateSummary | null;
+    } | null,
   };
 }
 
@@ -85,12 +96,15 @@ export default async function RuntimeDebugPage() {
         </section>
       )}
 
-      <OntologyPanel trace={latestDeliberation} />
+      <OntologyPanel trace={latestDeliberation as OntologySummaryProps["trace"]} />
 
       <HealthPanel health={health} />
 
       {continuity && (
-        <ContinuityHistory sessions={continuity.sessions ?? []} summary={continuity.summary ?? null} />
+        <ContinuityHistory
+          sessions={continuity.sessions ?? []}
+          summary={continuity.summary}
+        />
       )}
 
       {traces && traces.sessions && traces.sessions.length > 0 && (

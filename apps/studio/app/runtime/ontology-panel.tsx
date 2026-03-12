@@ -1,6 +1,6 @@
 import { buildSummaryLineFromParts } from "@/lib/runtime-continuity";
 
-interface OntologySummaryProps {
+export interface OntologySummaryProps {
   trace: {
     observations_json: Record<string, unknown> | null;
     tensions_json: Record<string, unknown> | null;

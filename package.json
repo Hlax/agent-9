@@ -24,6 +24,6 @@
     "node": ">=20"
   },
   "devDependencies": {
-    "supabase": "^1.200.0"
+    "supabase": "^1.226.4"
   }
 }
