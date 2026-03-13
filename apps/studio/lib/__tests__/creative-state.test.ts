@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   updateCreativeState,
   defaultCreativeState,
+  stateToSnapshotRow,
 } from "@twin/evaluation";
 import type { CreativeStateSignals } from "@twin/evaluation";
 import type { EvaluationSignal } from "@twin/core";
@@ -158,5 +159,78 @@ describe("updateCreativeState — signals parameter (A-6)", () => {
       // After isReflection: 0.8 - 0.2 = 0.6; repetition: max(0.6, 0.7) = 0.7
       expect(result.reflection_need).toBeGreaterThanOrEqual(0.7);
     });
+  });
+});
+
+/**
+ * Acceptance tests for Task 1 (no-artifact / reflection-only session state evolution).
+ * Validates the canonical contract used in session-runner no-artifact branch:
+ *   updateCreativeState(previousState, neutralEval, { isReflection, repetitionDetected })
+ */
+describe("no-artifact session state evolution — neutral evaluation (Task 1 acceptance)", () => {
+  /** Neutral evaluation signal matching neutralEvaluationSignalForNoArtifact in session-runner. */
+  function neutralEval(): EvaluationSignal {
+    return makeEval({
+      alignment_score: 0.5,
+      emergence_score: 0.5,
+      fertility_score: 0.5,
+      pull_score: 0.5,
+      recurrence_score: 0.2,
+      resonance_score: 0.5,
+      target_type: "session",
+      rationale: "no-artifact session; neutral signal for state evolution",
+    });
+  }
+
+  it("neutral evaluation keeps all state fields within [0, 1]", () => {
+    const prev = defaultCreativeState();
+    const next = updateCreativeState(prev, neutralEval(), {});
+    for (const key of Object.keys(next) as (keyof typeof next)[]) {
+      expect(next[key]).toBeGreaterThanOrEqual(0);
+      expect(next[key]).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("neutral evaluation produces only small state deltas (no extreme shifts)", () => {
+    const prev = defaultCreativeState();
+    const next = updateCreativeState(prev, neutralEval(), {});
+    // All fields should stay within 0.15 of previous values for neutral input
+    for (const key of Object.keys(next) as (keyof typeof next)[]) {
+      expect(Math.abs(next[key] - prev[key])).toBeLessThan(0.15);
+    }
+  });
+
+  it("reflection session (isReflection=true) lowers reflection_need even with neutral eval", () => {
+    const prev = { ...defaultCreativeState(), reflection_need: 0.7 };
+    const next = updateCreativeState(prev, neutralEval(), { isReflection: true });
+    expect(next.reflection_need).toBeLessThan(prev.reflection_need);
+  });
+
+  it("non-reflection session (isReflection=false) does not lower reflection_need via isReflection", () => {
+    const prev = { ...defaultCreativeState(), reflection_need: 0.7 };
+    const withFalse = updateCreativeState(prev, neutralEval(), { isReflection: false });
+    const withTrue = updateCreativeState(prev, neutralEval(), { isReflection: true });
+    expect(withFalse.reflection_need).toBeGreaterThan(withTrue.reflection_need);
+  });
+
+  it("no-artifact path uses same stateToSnapshotRow contract as artifact path", () => {
+    // Verify the canonical contract: stateToSnapshotRow(nextState, sessionId, null)
+    // produces a valid row shape with all required numeric fields
+    const prev = defaultCreativeState();
+    const next = updateCreativeState(prev, neutralEval(), { isReflection: true });
+    const row = stateToSnapshotRow(next, "sess-test", null);
+    expect(typeof row.state_snapshot_id).toBe("string");
+    expect(row.session_id).toBe("sess-test");
+    expect(row.notes).toBeNull();
+    // All score fields present and numeric
+    for (const field of [
+      "identity_stability", "avatar_alignment", "expression_diversity",
+      "unfinished_projects", "recent_exploration_rate", "creative_tension",
+      "curiosity_level", "reflection_need", "idea_recurrence", "public_curation_backlog",
+    ] as const) {
+      expect(typeof row[field]).toBe("number");
+      expect(row[field]).toBeGreaterThanOrEqual(0);
+      expect(row[field]).toBeLessThanOrEqual(1);
+    }
   });
 });

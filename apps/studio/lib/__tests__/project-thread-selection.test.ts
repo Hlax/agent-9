@@ -135,3 +135,22 @@ describe("selectProjectAndThread – recurrence loop (focus selection)", () => {
     expect(w2).toBeCloseTo(0.26, 5); // 0.1*0.6 + 0.5*0.4
   });
 });
+
+describe("selectProjectAndThread – recurrence trace return (Task 3 acceptance)", () => {
+  it("returns null recurrence trace fields when no projects exist", async () => {
+    const supabase = makeSupabase([]);
+    const result = await selectProjectAndThread(supabase as never);
+    expect(result.selectedThreadRecurrenceScore).toBeUndefined();
+    expect(result.selectedThreadCreativePull).toBeUndefined();
+    expect(result.selectedIdeaRecurrenceScore).toBeUndefined();
+    expect(result.selectedIdeaCreativePull).toBeUndefined();
+  });
+
+  it("returns recurrence trace fields as null when no threads exist for selected project", async () => {
+    const supabase = makeSupabase([{ project_id: "p1", priority: 0.8 }]);
+    const result = await selectProjectAndThread(supabase as never);
+    // No threads: thread fields should be null, idea fields undefined (not reached)
+    expect(result.selectedThreadRecurrenceScore).toBeNull();
+    expect(result.selectedThreadCreativePull).toBeNull();
+  });
+});

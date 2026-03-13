@@ -1,33 +1,37 @@
 /**
- * Stage-2 advisory feedback adapter (dry run only).
- * Not wired into runtime selection paths.
+ * Trajectory feedback adapter — advisory signals with one Stage-2 active binding.
  *
- * This module MAY read from the thought map summary (Stage-1 output) for advisory
- * purposes, but its output MUST NOT reach any selector: not mode, drive, focus,
- * proposal eligibility, proposal pressure, or selection source.
+ * Stage-1 contract (still in force for all other signals):
+ *   `getTrajectoryFeedback` output MUST NOT be called directly from any selector:
+ *   not mode, drive, focus, proposal eligibility, proposal pressure, or selection source.
  *
- * Stage-1 contract: "thought map must not influence selectors yet."
+ * Stage-2 active binding (one bounded signal only):
+ *   The `gently_reduce_repetition` signal from this adapter is pre-computed in
+ *   `loadCreativeStateAndBacklog` and stored as `state.trajectoryAdvisory`. It is then
+ *   read in `selectModeAndDrive` as a small +0.06 nudge to `reflection_need` — a bounded
+ *   delta on an existing selector, never a branch replacement. This binding is logged
+ *   explicitly and recorded in the deliberation trace (`hypotheses_json`).
  *
- * Safe insertion point: call `buildAdvisoryLog` after a session completes
- * (e.g. in runtime-state-api for display, or as a post-run observability step).
- * NEVER call from session-runner selection paths or mode/drive logic.
+ * All other signals (`favor_consolidation`, `proposal_pressure_adjustment`) remain
+ * dry-run / observability-only. Their output MUST NOT reach any selector.
  *
- * Signals the adapter reads (observability only):
- *   - session_posture (from thought map)
- *   - thread_repeat_rate / longest_thread_streak (clustering)
- *   - trajectory_shape / exploration_vs_consolidation (clustering)
- *   - proposals_last_10_sessions (activity summary)
- *   - interpretation_confidence (to gate on data quality)
+ * Safe insertion point for remaining dry-run signals:
+ *   Call `buildAdvisoryLog` after a session completes (e.g. in runtime-state-api for
+ *   the debug panel). NEVER call `getTrajectoryFeedback` directly from session-runner
+ *   selection paths or mode/drive logic.
  *
- * Where it logs advisory output:
- *   - runtime-state-api: `deriveTrajectoryAdvisoryDryRun` for the debug panel
- *   - NOT in session trace, NOT in selection_evidence, NOT in decision_summary
+ * Signals the adapter reads (from thought map / clustering):
+ *   - session_posture
+ *   - thread_repeat_rate / longest_thread_streak
+ *   - trajectory_shape / exploration_vs_consolidation
+ *   - proposals_last_10_sessions
+ *   - interpretation_confidence (gates advisory on data quality)
  *
- * Where it must NOT connect yet:
- *   - session-runner (any path)
- *   - mode/drive selectors
- *   - proposal eligibility or pressure
- *   - selection source logic
+ * Where advisory output goes:
+ *   - `gently_reduce_repetition` → state.trajectoryAdvisory → reflection_need nudge in selectModeAndDrive
+ *   - deliberation trace `hypotheses_json.trajectory_advisory_applied`
+ *   - runtime-state-api `deriveTrajectoryAdvisoryDryRun` for debug panel (other signals)
+ *   - NOT in selection_evidence, NOT in selection_source logic
  */
 
 /**
@@ -147,9 +151,11 @@ export function getTrajectoryFeedback(context: TrajectoryFeedbackContext): Traje
 }
 
 /**
- * Build a structured advisory log entry for runtime observability.
+ * Build a structured advisory log entry for runtime observability (debug panel).
  * Safe to call from runtime-state-api after fetching the thought map.
- * MUST NOT be called from session-runner or any selection path.
+ * MUST NOT be called from session-runner or any selection path — the pre-computed
+ * state.trajectoryAdvisory path in loadCreativeStateAndBacklog is the only sanctioned
+ * wiring for the active gently_reduce_repetition signal.
  */
 export function buildAdvisoryLog(context: TrajectoryFeedbackContext): TrajectoryAdvisoryLog {
   return {
@@ -157,6 +163,6 @@ export function buildAdvisoryLog(context: TrajectoryFeedbackContext): Trajectory
     feedback: getTrajectoryFeedback(context),
     context_snapshot: context,
     generated_at: new Date().toISOString(),
-    note: "Stage-2 advisory adapter (dry run). Output is observability-only and does NOT influence any selection path. Safe insertion point: runtime debug panel only.",
+    note: "Trajectory advisory adapter. gently_reduce_repetition is Stage-2 active (wired via state.trajectoryAdvisory → reflection_need nudge). Other signals are observability-only and do NOT influence selection paths.",
   };
 }

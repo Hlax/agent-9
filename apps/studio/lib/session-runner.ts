@@ -712,6 +712,12 @@ async function selectFocus(state: SessionExecutionState): Promise<SessionExecuti
           project: selectedProjectId,
           thread: selectedThreadId,
           idea: selectedIdeaId,
+          continuity_trace: {
+            thread_recurrence_score: selection.selectedThreadRecurrenceScore ?? null,
+            thread_creative_pull: selection.selectedThreadCreativePull ?? null,
+            idea_recurrence_score: selection.selectedIdeaRecurrenceScore ?? null,
+            idea_creative_pull: selection.selectedIdeaCreativePull ?? null,
+          },
           continuity: "weighted by idea_thread/idea recurrence_score and creative_pull (see CONTINUITY_RECURRENCE_AUDIT.md)",
         });
       }
@@ -1142,6 +1148,12 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
           error: `No-artifact state snapshot insert failed: ${noArtifactStateError.message}`,
         });
       }
+      console.log("[session] no_artifact_state_snapshot_persisted", {
+        session_id: sessionId,
+        session_mode: state.sessionMode,
+        snapshot_id: noArtifactSnapshotRow.state_snapshot_id,
+        is_reflection: state.sessionMode === "reflect",
+      });
     }
     return finalizeResult(state);
   }
@@ -2326,6 +2338,10 @@ async function writeTraceAndDeliberation(
         next_action_reason: "derived_from_decision_summary",
         action_kind: actionKind,
         confidence_band: confidenceBand,
+        trajectory_advisory_applied:
+          state.trajectoryAdvisory?.feedback.gently_reduce_repetition === true &&
+          state.trajectoryAdvisory.interpretation_confidence !== "low",
+        trajectory_advisory_reason: state.trajectoryAdvisory?.feedback.reason ?? null,
       },
       evidence_checked_json: {
         selected_project_id: state.selectedProjectId,
