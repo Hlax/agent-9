@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { SignOut } from "./sign-out";
+import { SignOut } from "../sign-out";
 
 /**
  * Studio v2 pipeline navigation.
