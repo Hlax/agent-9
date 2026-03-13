@@ -238,19 +238,19 @@ import { promoteStagingToPublic } from "../staging-composition";
 
 /**
  * Build a minimal Supabase mock for promoteStagingToPublic tests.
- *
- * The proposal_record table is called three times when source proposals exist:
- *   1. Eligibility select: .select("...").in([sourceIds]).in([states]) → proposal rows
- *   2. Update: .update({proposal_state:"published",...}).in([eligibleIds]) → { error }
- *   3. Count select: .select("...", {count}).in([ids]).eq("proposal_state","published") → { count }
- *
- * The identity table is called once by getActiveIdentityId; the mock returns null
- * (no active identity) so the snapshot lineage block inside promoteStagingToPublic
- * is skipped. This keeps tests focused on the promotion logic itself.
+ * The proposal_record table is called twice: once for update, once for the
+ * post-update count query. The mock tracks call order on `from("proposal_record")`
+ * to return the correct chain for each call.
  */
 function buildPromoteMock({
   stagingRows = [
-    { slug: "home", title: "Home", body: null, payload_json: { page: "home", blocks: [] }, source_proposal_id: "prop-abc" },
+    {
+      slug: "home",
+      title: "Home",
+      body: null,
+      payload_json: { page: "home", blocks: [] },
+      source_proposal_id: "prop-abc",
+    },
   ],
   stagingFetchError = null as null | { message: string },
   publicUpsertError = null as null | { message: string },
@@ -258,94 +258,197 @@ function buildPromoteMock({
   proposalUpdateCount = 1 as number,
   promotionInsertError = null as null | { message: string },
   promotionId = "promo-1",
+  hasIdentity = true as boolean,
 } = {}) {
-  // Update chain: .update({...}).in([ids]) → { error }
-  const mockProposalUpdate = vi.fn(() => ({
-    in: vi.fn(() => Promise.resolve({ error: proposalUpdateError })),
-  }));
+  // Update chain: .update().in().in() → { error }
+  const mockProposalEligibilitySelect = vi.fn(() =>
+    Promise.resolve({
+      data:
+        stagingRows
+          .map((r) => r.source_proposal_id)
+          .filter((id): id is string => !!id)
+          .filter((value, index, self) => self.indexOf(value) === index)
+          .map((id) => ({
+            proposal_record_id: id,
+            proposal_state: "approved_for_publication",
+            lane_type: "surface",
+          })) ?? [],
+      error: null,
+    })
+  );
 
-  // Count chain: .select(..., {count, head}).in([ids]).eq(...) → { count, error }
-  const mockProposalSelect = vi.fn(() => ({
+  const mockProposalUpdate = vi.fn(() => ({
     in: vi.fn(() => ({
-      eq: vi.fn(() => Promise.resolve({ count: proposalUpdateCount, error: null })),
+      update: vi.fn(() =>
+        Promise.resolve({
+          error: proposalUpdateError,
+        })
+      ),
     })),
   }));
 
-  // Derive eligible proposal rows from staging rows (deduplicated by source_proposal_id).
-  // Each row is marked approved_for_publication in the surface lane so the governance check passes.
-  const seen = new Set<string>();
-  const eligibilityProposals = stagingRows
-    .filter((r) => r.source_proposal_id)
-    .reduce<{ proposal_record_id: string; proposal_state: string; lane_type: string }[]>((acc, r) => {
-      const id = r.source_proposal_id as string;
-      if (!seen.has(id)) {
-        seen.add(id);
-        acc.push({ proposal_record_id: id, proposal_state: "approved_for_publication", lane_type: "surface" });
-      }
-      return acc;
-    }, []);
+  const mockProposalCountSelect = vi.fn(() => ({
+    in: vi.fn(() => ({
+      eq: vi.fn(() =>
+        Promise.resolve({
+          count: proposalUpdateCount,
+          error: null,
+        })
+      ),
+    })),
+  }));
 
-  // Track proposal_record call sequence: 1=eligibility select, 2=update, 3=count select.
-  let proposalCallCount = 0;
+  // Track how many times proposal_record has been called:
+  // 1 → eligibility read, 2 → update, 3 → count verification.
+  let proposalCallIndex = 0;
 
-  const mockPublicUpsert = vi.fn(() => Promise.resolve({ error: publicUpsertError }));
+  const mockPublicUpsert = vi.fn(() =>
+    Promise.resolve({
+      error: publicUpsertError,
+    })
+  );
+
   const mockPromoInsert = vi.fn(() => ({
     select: vi.fn(() => ({
-      single: vi.fn(() => Promise.resolve({ data: { id: promotionId }, error: promotionInsertError })),
+      single: vi.fn(() =>
+        Promise.resolve({
+          data: { id: promotionId },
+          error: promotionInsertError,
+        })
+      ),
     })),
   }));
 
-  // Fluent chain for getActiveIdentityId: returns null so the snapshot lineage block is skipped.
-  function buildIdentityChain(): Record<string, unknown> {
-    const chain: Record<string, unknown> = {};
-    chain.select = vi.fn(() => chain);
-    chain.eq = vi.fn(() => chain);
-    chain.limit = vi.fn(() => chain);
-    chain.maybeSingle = vi.fn(() => Promise.resolve({ data: null }));
-    return chain;
-  }
+  const mockIdentitySelect = vi.fn(() => ({
+    eq: vi.fn(() =>
+      Promise.resolve({
+        data: hasIdentity
+          ? {
+              identity_id: "identity-1",
+              active_avatar_artifact_id: null,
+              embodiment_direction: null,
+            }
+          : null,
+        error: null,
+      })
+    ),
+    limit: vi.fn(() => ({
+      maybeSingle: vi.fn(() =>
+        Promise.resolve({
+          data: hasIdentity ? { identity_id: "identity-1" } : null,
+          error: null,
+        })
+      ),
+    })),
+    maybeSingle: vi.fn(() =>
+      Promise.resolve({
+        data: hasIdentity
+          ? {
+              active_avatar_artifact_id: null,
+              embodiment_direction: null,
+            }
+          : null,
+        error: null,
+      })
+    ),
+  }));
+
+  const mockSnapshotSelect = vi.fn(() => ({
+    eq: vi.fn(() => ({
+      eq: vi.fn(() => ({
+        order: vi.fn(() => ({
+          limit: vi.fn(() => ({
+            maybeSingle: vi.fn(() =>
+              Promise.resolve({
+                data: null,
+                error: null,
+              })
+            ),
+          })),
+        })),
+      })),
+    })),
+  }));
+
+  const mockSnapshotInsert = vi.fn(() => ({
+    select: vi.fn(() => ({
+      single: vi.fn(() =>
+        Promise.resolve({
+          data: { snapshot_id: "snap-1" },
+          error: null,
+        })
+      ),
+    })),
+  }));
 
   const supabase = {
     from: vi.fn((table: string) => {
       if (table === "staging_habitat_content") {
         return {
-          select: vi.fn(() => Promise.resolve({ data: stagingRows, error: stagingFetchError })),
+          select: vi.fn(() =>
+            Promise.resolve({
+              data: stagingRows,
+              error: stagingFetchError,
+            })
+          ),
         };
       }
       if (table === "public_habitat_content") {
-        return { upsert: mockPublicUpsert };
-      }
-      if (table === "identity") {
-        // getActiveIdentityId query; returns null so snapshot lineage block is skipped.
-        return buildIdentityChain();
+        return {
+          upsert: mockPublicUpsert,
+        };
       }
       if (table === "proposal_record") {
-        proposalCallCount += 1;
-        if (proposalCallCount === 1) {
-          // Eligibility select: .select("...").in([sourceIds]).in([states]) → eligible proposals
+        proposalCallIndex += 1;
+        if (proposalCallIndex === 1) {
+          // Eligibility read: .select().in().in()
           return {
             select: vi.fn(() => ({
               in: vi.fn(() => ({
-                in: vi.fn(() => Promise.resolve({ data: eligibilityProposals, error: null })),
+                in: vi.fn(() => mockProposalEligibilitySelect()),
               })),
             })),
           };
-        } else if (proposalCallCount === 2) {
-          // Update: .update({...}).in([eligibleIds]) → { error }
-          return { update: mockProposalUpdate };
-        } else {
-          // Count select: .select(..., {count}).in([ids]).eq("proposal_state","published")
-          return { select: mockProposalSelect };
         }
+        if (proposalCallIndex === 2) {
+          // Update chain
+          return {
+            update: mockProposalUpdate,
+          };
+        }
+        // Count verification
+        return {
+          select: mockProposalCountSelect,
+        };
       }
       if (table === "habitat_promotion_record") {
-        return { insert: mockPromoInsert };
+        return {
+          insert: mockPromoInsert,
+        };
+      }
+      if (table === "identity") {
+        return {
+          select: mockIdentitySelect,
+        };
+      }
+      if (table === "habitat_snapshot") {
+        return {
+          select: mockSnapshotSelect,
+          insert: mockSnapshotInsert,
+        };
       }
       return {};
     }),
   } as unknown as import("@supabase/supabase-js").SupabaseClient;
 
-  return { supabase, mockPublicUpsert, mockProposalUpdate, mockProposalSelect, mockPromoInsert };
+  return {
+    supabase,
+    mockPublicUpsert,
+    mockProposalUpdate,
+    mockPromoInsert,
+    mockProposalEligibilitySelect,
+    mockProposalCountSelect,
+  };
 }
 
 describe("promoteStagingToPublic", () => {
@@ -391,7 +494,9 @@ describe("promoteStagingToPublic", () => {
   });
 
   it("advances source proposals to published state", async () => {
-    const { supabase, mockProposalUpdate } = buildPromoteMock({ proposalUpdateCount: 1 });
+    const { supabase, mockProposalUpdate } = buildPromoteMock({
+      proposalUpdateCount: 1,
+    });
     const result = await promoteStagingToPublic(supabase, "operator@example.com");
 
     expect(result.proposalsPublished).toBe(1);
@@ -446,5 +551,19 @@ describe("promoteStagingToPublic", () => {
     // Proposal update called once with deduplicated IDs (prop-1, prop-2).
     expect(mockProposalUpdate).toHaveBeenCalledTimes(1);
     expect(result.proposalsPublished).toBe(2);
+  });
+
+  it("completes promotion when no active identity exists", async () => {
+    const { supabase } = buildPromoteMock({
+      hasIdentity: false,
+    });
+    const result = await promoteStagingToPublic(
+      supabase,
+      "operator@example.com"
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.slugsUpdated.length).toBeGreaterThan(0);
+    expect(result.promotionId).toBeTruthy();
   });
 });

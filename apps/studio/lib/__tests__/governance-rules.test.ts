@@ -124,7 +124,12 @@ describe("isLegalProposalStateTransition", () => {
 describe("getNextLegalProposalActions", () => {
   it("returns next states for pending_review", () => {
     expect(getNextLegalProposalActions("pending_review")).toEqual([
-      "needs_revision", "approved_for_staging", "archived", "rejected", "ignored", "approved",
+      "needs_revision",
+      "approved_for_staging",
+      "archived",
+      "rejected",
+      "ignored",
+      "approved",
     ]);
   });
   it("returns next states for approved_for_staging", () => {
@@ -137,5 +142,12 @@ describe("getNextLegalProposalActions", () => {
   });
   it("returns empty for unknown state", () => {
     expect(getNextLegalProposalActions("unknown")).toEqual([]);
+  });
+});
+
+describe("pending_review_can_transition_to_approved", () => {
+  it("includes approved as a legal next state for pending_review", () => {
+    const next = getNextLegalProposalActions("pending_review");
+    expect(next).toContain("approved");
   });
 });
