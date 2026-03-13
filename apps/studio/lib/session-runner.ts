@@ -56,6 +56,8 @@ import {
   evaluateGovernanceGate,
   getProposalAuthority,
 } from "@/lib/proposal-governance";
+import { buildConceptFamilies } from "@/lib/proposal-families";
+import { evaluateProposalRelationship, type ProposalForRelationship } from "@/lib/proposal-relationship";
 import { writeDeliberationTrace } from "./deliberation-trace";
 import { deriveTrajectoryReview } from "./trajectory-review";
 import {
@@ -1137,7 +1139,6 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
     // Still attempt trajectory review for no-artifact sessions when persistence exists.
     if (state.supabase && state.pipelineResult) {
       const supabase = state.supabase;
-      const sessionId = state.pipelineResult.session.session_id;
       state = await persistTrajectoryReview(state);
       // Intent continuity: update or create active intent after trajectory review.
       const intentInput = buildIntentUpdateInput(state);
@@ -1147,26 +1148,32 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
       // Step 1 (loop closure): persist creative_state_snapshot so next session sees updated state.
       // Same canonical contract as artifact path: evolve state then persist via stateToSnapshotRow.
       // No-artifact evolution: neutral evaluation + session-type signals (e.g. reflect reduces reflection_need).
-      const noArtifactEval = neutralEvaluationSignalForNoArtifact(sessionId);
-      const noArtifactNextState = updateCreativeState(state.previousState, noArtifactEval, {
-        isReflection: state.sessionMode === "reflect",
-        repetitionDetected: state.repetitionDetected ?? false,
-      });
-      const noArtifactSnapshotRow = stateToSnapshotRow(noArtifactNextState, sessionId, null);
-      const { error: noArtifactStateError } = await supabase
-        .from("creative_state_snapshot")
-        .insert(noArtifactSnapshotRow);
-      if (noArtifactStateError) {
-        throw new SessionRunError(500, {
-          error: `No-artifact state snapshot insert failed: ${noArtifactStateError.message}`,
+      // Architecture closure: next session's state load must not go stale when previous run produced no primary artifact.
+      const sessionIdForSnapshot = state.pipelineResult?.session?.session_id;
+      if (!sessionIdForSnapshot) {
+        console.warn("[session] no-artifact path: skipping creative_state_snapshot insert (no session_id)");
+      } else {
+        const noArtifactEval = neutralEvaluationSignalForNoArtifact(sessionIdForSnapshot);
+        const noArtifactNextState = updateCreativeState(state.previousState, noArtifactEval, {
+          isReflection: state.sessionMode === "reflect",
+          repetitionDetected: state.repetitionDetected ?? false,
+        });
+        const noArtifactSnapshotRow = stateToSnapshotRow(noArtifactNextState, sessionIdForSnapshot, "no-artifact session; neutral signal for state evolution");
+        const { error: noArtifactStateError } = await supabase
+          .from("creative_state_snapshot")
+          .insert(noArtifactSnapshotRow);
+        if (noArtifactStateError) {
+          throw new SessionRunError(500, {
+            error: `No-artifact state snapshot insert failed: ${noArtifactStateError.message}`,
+          });
+        }
+        console.log("[session] no_artifact_state_snapshot_persisted", {
+          session_id: sessionIdForSnapshot,
+          session_mode: state.sessionMode,
+          snapshot_id: noArtifactSnapshotRow.state_snapshot_id,
+          is_reflection: state.sessionMode === "reflect",
         });
       }
-      console.log("[session] no_artifact_state_snapshot_persisted", {
-        session_id: sessionId,
-        session_mode: state.sessionMode,
-        snapshot_id: noArtifactSnapshotRow.state_snapshot_id,
-        is_reflection: state.sessionMode === "reflect",
-      });
     }
     return finalizeResult(state);
   }
@@ -1650,6 +1657,44 @@ export function isExtensionProposalEligible(state: SessionExecutionState): boole
   return hasCapabilitySupport || hasRationale;
 }
 
+/** Proposal Policy V1: derive 0–1 duplicate pressure from recent proposals for governance gate (semantic duplicate pressure). */
+async function getDuplicateSignalForProposalGate(
+  supabase: SupabaseClient
+): Promise<number> {
+  try {
+    const { data: rows } = await supabase
+      .from("proposal_record")
+      .select(
+        "proposal_record_id, title, summary, habitat_payload_json, target_surface, proposal_role, target_type, lane_type, created_at"
+      )
+      .order("created_at", { ascending: false })
+      .limit(25);
+    if (!rows?.length) return 0;
+    const relInputs: ProposalForRelationship[] = rows.map((p: Record<string, unknown>) => ({
+      id: String(p.proposal_record_id),
+      title: String(p.title ?? ""),
+      summary: (p.summary as string) ?? null,
+      payloadText:
+        p.habitat_payload_json && typeof p.habitat_payload_json === "object"
+          ? JSON.stringify(p.habitat_payload_json).slice(0, 800)
+          : null,
+      targetSurface: (p.target_surface as string) ?? null,
+      proposalRole: (p.proposal_role as string) ?? null,
+      targetType: (p.target_type as string) ?? null,
+      laneType: (p.lane_type as string) ?? null,
+      createdAt: (p.created_at as string) ?? null,
+    }));
+    const { summary } = buildConceptFamilies(relInputs, (current, all) =>
+      evaluateProposalRelationship(current, all)
+    );
+    const total = summary.family_count_recent || 0;
+    if (total === 0) return 0;
+    return Math.min(1, summary.families_with_duplicate_pressure / total);
+  } catch {
+    return 0;
+  }
+}
+
 async function manageProposals(state: SessionExecutionState): Promise<SessionExecutionState> {
   const supabase = state.supabase;
   const artifact = state.primaryArtifact;
@@ -1667,6 +1712,10 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
     proposalOutcome,
     governanceEvidence,
   } = state;
+
+  // Proposal lane precedence (explicit policy): 1. Concept → surface habitat; 2. Image → avatar; 3. Extension → medium.
+  // Later lanes may overwrite proposalOutcome until multi-outcome trace (e.g. proposal_attempts) is introduced.
+  const duplicate_signal = await getDuplicateSignalForProposalGate(supabase);
 
   if (artifact.medium === "concept") {
     // Governance V1: classify lane/role for habitat layout proposals and
@@ -1686,10 +1735,17 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
         ...warnings,
         `${reason} codes=${createCheck.reason_codes.join(",")}`,
       ];
+      governanceEvidence = {
+        lane_type: laneInfo.lane_type,
+        classification_reason: laneInfo.classification_reason,
+        actor_authority: authority,
+        reason_codes: createCheck.reason_codes,
+      };
       return {
         ...state,
         warnings: updatedWarnings,
         proposalOutcome: proposalOutcome ?? "skipped_governance",
+        governanceEvidence,
         decisionSummary: {
           ...decisionSummary,
           next_action: decisionSummary.next_action ?? reason,
@@ -1708,7 +1764,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
       target_state: "pending_review",
       actor_authority: authority,
       confidence_truth: state.confidence_truth,
-      duplicate_signal: null,
+      duplicate_signal,
       has_minimum_evidence: hasMinimumEvidence,
     });
     if (gate.decision === "block") {
@@ -1720,10 +1776,17 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
         ...warnings,
         `${reason}`,
       ];
+      governanceEvidence = {
+        lane_type: laneInfo.lane_type,
+        classification_reason: laneInfo.classification_reason,
+        actor_authority: authority,
+        reason_codes: gate.reason_codes,
+      };
       return {
         ...state,
         warnings: updatedWarnings,
         proposalOutcome: proposalOutcome ?? "skipped_governance",
+        governanceEvidence,
         decisionSummary: {
           ...decisionSummary,
           next_action: decisionSummary.next_action ?? reason,
@@ -1938,6 +2001,13 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
           cap: avatarCap,
           role: "avatar_candidate",
         });
+        proposalOutcome = proposalOutcome ?? "skipped_cap";
+        decisionSummary = {
+          ...decisionSummary,
+          next_action:
+            decisionSummary.next_action ??
+            "Focus on reviewing existing avatar proposals before creating new ones (backlog at cap).",
+        };
       } else {
         const avatarSummary = capSummaryTo200Words(
           artifact.summary ?? artifact.title ?? "Proposed as public avatar."
@@ -1971,6 +2041,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
           traceProposalId = insertedAvatar.proposal_record_id as string;
           traceProposalType = "avatar";
           proposalCreated = true;
+          proposalOutcome = "created";
           decisionSummary = {
             ...decisionSummary,
             next_action:
@@ -1979,6 +2050,14 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
           };
         }
       }
+    } else {
+      proposalOutcome = proposalOutcome ?? "skipped_duplicate";
+      decisionSummary = {
+        ...decisionSummary,
+        next_action:
+          decisionSummary.next_action ??
+          "Proposal not created: this image already has an avatar candidate proposal.",
+      };
     }
   }
 
@@ -1999,6 +2078,12 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
         ...warnings,
         `${reason} codes=${createCheck.reason_codes.join(",")}`,
       ];
+      governanceEvidence = {
+        lane_type: laneInfo.lane_type,
+        classification_reason: laneInfo.classification_reason,
+        actor_authority: authority,
+        reason_codes: createCheck.reason_codes,
+      };
       return {
         ...state,
         warnings,
@@ -2006,6 +2091,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
         traceProposalId,
         traceProposalType,
         proposalOutcome: proposalOutcome ?? "skipped_governance",
+        governanceEvidence,
         decisionSummary,
       };
     }
@@ -2021,7 +2107,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
       target_state: "pending_review",
       actor_authority: authority,
       confidence_truth: state.confidence_truth,
-      duplicate_signal: null,
+      duplicate_signal,
       has_minimum_evidence: hasMinimumEvidence,
     });
     if (gate.decision === "block") {
@@ -2030,6 +2116,12 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
           ? "Extension proposal skipped: confidence was defaulted and governance gate blocked creation."
           : `Extension proposal skipped: governance gate reported insufficient evidence (codes=${gate.reason_codes.join(",")}).`;
       warnings = [...warnings, reason];
+      governanceEvidence = {
+        lane_type: laneInfo.lane_type,
+        classification_reason: laneInfo.classification_reason,
+        actor_authority: authority,
+        reason_codes: gate.reason_codes,
+      };
       return {
         ...state,
         warnings,
@@ -2037,6 +2129,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
         traceProposalId,
         traceProposalType,
         proposalOutcome: proposalOutcome ?? "skipped_governance",
+        governanceEvidence,
         decisionSummary: {
           ...decisionSummary,
           next_action: decisionSummary.next_action ?? reason,
@@ -2076,8 +2169,15 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
         pending,
         cap: extensionCap,
       });
+      proposalOutcome = proposalOutcome ?? "skipped_cap";
+      decisionSummary = {
+        ...decisionSummary,
+        next_action:
+          decisionSummary.next_action ??
+          "Focus on reviewing existing extension proposals before creating new ones (backlog at cap).",
+      };
     } else {
-      // Optional dedupe: avoid duplicate extension proposal for same artifact + role.
+      // Structural duplicate guard: artifact_id + role cannot have multiple pending extension proposals.
       const { data: existingForArtifact } = await supabase
         .from("proposal_record")
         .select("proposal_record_id")
@@ -2087,7 +2187,15 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
         .eq("proposal_state", "pending_review")
         .limit(1)
         .maybeSingle();
-      if (!existingForArtifact) {
+      if (existingForArtifact) {
+        proposalOutcome = proposalOutcome ?? "skipped_duplicate";
+        decisionSummary = {
+          ...decisionSummary,
+          next_action:
+            decisionSummary.next_action ??
+            "Proposal not created: this artifact already has a pending extension proposal for this role.",
+        };
+      } else {
         const rationale = [critique!.medium_fit_note, critique!.overall_summary]
           .filter(Boolean)
           .join(" ");
@@ -2130,6 +2238,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
           traceProposalId = insertedExtension.proposal_record_id as string;
           traceProposalType = "extension";
           proposalCreated = true;
+          proposalOutcome = "created";
           decisionSummary = {
             ...decisionSummary,
             next_action:

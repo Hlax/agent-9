@@ -1,15 +1,75 @@
 /**
  * Staging habitat composition: merge approved proposals into staging, promote to public.
  * Canon: docs/architecture/habitat_branch_staging_design.md
+ * Snapshot lineage: docs/05_build/SNAPSHOT_LINEAGE_IDENTITY_TRAJECTORY_V1.md
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { deriveTraitSummaryFromStagingPages } from "./habitat-trait-summary";
 import { parseHabitatPayloadForMerge, validateHabitatPayload } from "./habitat-payload";
 import {
   canTransitionProposalState,
   getProposalAuthority,
   type LaneType,
 } from "./proposal-governance";
+
+/** Active identity id (is_active = true). Required for lineage; even single-identity must set identity_id. */
+export async function getActiveIdentityId(supabase: SupabaseClient): Promise<string | null> {
+  const { data } = await supabase
+    .from("identity")
+    .select("identity_id")
+    .eq("is_active", true)
+    .limit(1)
+    .maybeSingle();
+  return (data?.identity_id as string) ?? null;
+}
+
+/** Previous public snapshot for this identity (chain head). Used as parent_snapshot_id for new public snapshot. */
+export async function getPreviousPublicSnapshotId(
+  supabase: SupabaseClient,
+  identityId: string
+): Promise<string | null> {
+  const { data } = await supabase
+    .from("habitat_snapshot")
+    .select("snapshot_id")
+    .eq("identity_id", identityId)
+    .eq("snapshot_kind", "public")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (data?.snapshot_id as string) ?? null;
+}
+
+/** Create a new public snapshot row (immutable). On promotion we create a NEW row; do not re-tag staging. */
+export async function createPublicHabitatSnapshot(
+  supabase: SupabaseClient,
+  params: {
+    identity_id: string;
+    parent_snapshot_id: string | null;
+    payload_json: object;
+    trait_summary: object;
+    source_session_ids: string[];
+  }
+): Promise<{ snapshot_id: string } | { error: string }> {
+  const now = new Date().toISOString();
+  const row = {
+    identity_id: params.identity_id,
+    parent_snapshot_id: params.parent_snapshot_id,
+    snapshot_kind: "public" as const,
+    created_at: now,
+    source_session_ids: params.source_session_ids,
+    trait_summary: params.trait_summary,
+    lineage_metadata: null as object | null,
+    payload_json: params.payload_json,
+  };
+  const { data, error } = await supabase
+    .from("habitat_snapshot")
+    .insert(row)
+    .select("snapshot_id")
+    .single();
+  if (error) return { error: error.message };
+  return { snapshot_id: (data?.snapshot_id as string) ?? "" };
+}
 
 /**
  * Proposal states from which a promotion-to-public may advance to 'published'.
@@ -133,6 +193,39 @@ export async function promoteStagingToPublic(
     slugsUpdated.push(row.slug);
   }
 
+  // Snapshot lineage V1: create new public snapshot (identity-scoped chain). Do not re-tag staging row.
+  const identityId = await getActiveIdentityId(supabase);
+  let newSnapshotId: string | null = null;
+  let previousPublicSnapshotId: string | null = null;
+  if (identityId) {
+    previousPublicSnapshotId = await getPreviousPublicSnapshotId(supabase, identityId);
+    const { data: ident } = await supabase
+      .from("identity")
+      .select("active_avatar_artifact_id, embodiment_direction")
+      .eq("identity_id", identityId)
+      .maybeSingle();
+    const avatarArtifactId = (ident as { active_avatar_artifact_id?: string } | null)?.active_avatar_artifact_id ?? null;
+    const embodimentDirection = (ident as { embodiment_direction?: string } | null)?.embodiment_direction ?? null;
+    const pages = rows.map((r) => ({ slug: r.slug, payload_json: r.payload_json }));
+    const traitSummary = deriveTraitSummaryFromStagingPages(pages, avatarArtifactId, embodimentDirection, []);
+    const payloadJson = {
+      habitat_pages: rows.map((r) => ({ slug: r.slug, payload: r.payload_json })),
+      avatar_state: avatarArtifactId ? { avatar_artifact_id: avatarArtifactId, embodiment_direction: embodimentDirection } : null,
+      extensions: [],
+    };
+    const snapshotResult = await createPublicHabitatSnapshot(supabase, {
+      identity_id: identityId,
+      parent_snapshot_id: previousPublicSnapshotId,
+      payload_json: payloadJson,
+      trait_summary: traitSummary,
+      source_session_ids: [], // promotion is human-triggered; no session ids
+    });
+    if ("snapshot_id" in snapshotResult) {
+      newSnapshotId = snapshotResult.snapshot_id;
+    }
+    // Non-fatal: if snapshot creation fails we still record the promotion (lineage optional for V1).
+  }
+
   // Advance source proposals to 'published'. Collect unique non-null proposal IDs
   // from staging rows, then bulk-update only those in promotable states.
   // The update and count are split into two queries: Supabase does not reliably
@@ -186,14 +279,18 @@ export async function promoteStagingToPublic(
     }
   }
 
+  const promoRow: Record<string, unknown> = {
+    promoted_at: now,
+    promoted_by: promotedBy,
+    slugs_updated: slugsUpdated,
+    created_at: now,
+  };
+  if (newSnapshotId != null) promoRow.snapshot_id = newSnapshotId;
+  if (previousPublicSnapshotId != null) promoRow.previous_public_snapshot_id = previousPublicSnapshotId;
+
   const { data: promo, error: insertErr } = await supabase
     .from("habitat_promotion_record")
-    .insert({
-      promoted_at: now,
-      promoted_by: promotedBy,
-      slugs_updated: slugsUpdated,
-      created_at: now,
-    })
+    .insert(promoRow)
     .select("id")
     .single();
   if (insertErr) {
