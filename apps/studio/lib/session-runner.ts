@@ -1023,6 +1023,10 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
     if (state.supabase && state.pipelineResult && state.isCron) {
       state = await persistSessionAndReflectionArtifact(state);
     }
+    // Every session leaves a trace: minimal trace for no-artifact (update or insert).
+    if (state.supabase && state.pipelineResult) {
+      state = await persistMinimalSessionTrace(state);
+    }
     // Still attempt trajectory review for no-artifact sessions when persistence exists.
     if (state.supabase && state.pipelineResult) {
       const supabase = state.supabase;
@@ -1887,6 +1891,196 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
   };
 }
 
+/** Canonical signal keys for Selection Evidence Ledger v2. */
+const SELECTION_EVIDENCE_SIGNAL_KEYS = [
+  "backlog_pressure",
+  "recurrence_signal",
+  "proposal_backlog",
+  "archive_return",
+  "reflection_need",
+  "governance_flags",
+] as const;
+
+export type SelectionEvidenceV2 = {
+  version: 2;
+  signals: Record<
+    (typeof SELECTION_EVIDENCE_SIGNAL_KEYS)[number],
+    { present: boolean; used: boolean }
+  >;
+  decision_summary: string;
+  selection_source: string;
+  selected_thread_id: string | null;
+  selected_mode: string | null;
+  selected_drive: string | null;
+  /** Backward compatibility: derived from signals (and taste_bias when present). */
+  signals_present: string[];
+  /** Backward compatibility: derived from signals. */
+  signals_used: string[];
+};
+
+/**
+ * Build selection evidence for the session trace (Selection Evidence Ledger).
+ * v2: normalized signals object; legacy arrays derived for backward compatibility.
+ * Records which signals were present and which were used so we can later answer
+ * "why did the agent switch threads?" — e.g. backlog_pressure + recurrence_signal, NOT thought_map.
+ */
+function buildSelectionEvidence(state: SessionExecutionState): SelectionEvidenceV2 {
+  const backlogPresent = state.liveBacklog > 0;
+  const recurrencePresent =
+    state.previousState.idea_recurrence != null ||
+    state.selectedThreadId != null ||
+    state.selectedIdeaId != null;
+  const proposalBacklogPresent = state.liveBacklog > 0;
+  const archivePresent = state.archiveCandidateAvailable;
+  const reflectionPresent =
+    state.previousState.reflection_need != null &&
+    Number(state.previousState.reflection_need) > 0;
+  const governancePresent = state.repetitionDetected;
+
+  const used: Record<string, boolean> = {};
+  if (state.selectionSource === "archive") {
+    used.archive_return = true;
+  } else if (state.sessionMode === "reflect") {
+    used.reflection_need = true;
+    if (state.liveBacklog > 0) used.backlog_pressure = true;
+  } else if (state.sessionMode === "return") {
+    used.archive_return = true;
+  } else {
+    if (state.liveBacklog > 0) used.backlog_pressure = true;
+    if (state.selectedThreadId != null || state.selectedIdeaId != null) used.recurrence_signal = true;
+  }
+  if (state.repetitionDetected) used.governance_flags = true;
+
+  const signals: SelectionEvidenceV2["signals"] = {
+    backlog_pressure: { present: backlogPresent, used: !!used.backlog_pressure },
+    recurrence_signal: { present: recurrencePresent, used: !!used.recurrence_signal },
+    proposal_backlog: { present: proposalBacklogPresent, used: false },
+    archive_return: { present: archivePresent, used: !!used.archive_return },
+    reflection_need: { present: reflectionPresent, used: !!used.reflection_need },
+    governance_flags: { present: governancePresent, used: !!used.governance_flags },
+  };
+
+  const signals_present: string[] = SELECTION_EVIDENCE_SIGNAL_KEYS.filter((k) => signals[k].present).slice();
+  if (state.tasteBiasDebug) signals_present.push("taste_bias");
+  const signals_used = SELECTION_EVIDENCE_SIGNAL_KEYS.filter((k) => signals[k].used).slice();
+
+  const decision_summary =
+    state.decisionSummary.next_action ?? `mode=${state.sessionMode}, drive=${state.selectedDrive ?? "none"}`;
+
+  return {
+    version: 2,
+    signals,
+    decision_summary,
+    selection_source: state.selectionSource ?? "unknown",
+    selected_thread_id: state.selectedThreadId ?? null,
+    selected_mode: state.sessionMode ?? null,
+    selected_drive: state.selectedDrive ?? null,
+    signals_present,
+    signals_used,
+  };
+}
+
+/** Build minimal trace for no-artifact sessions (timeline-compatible). */
+function buildMinimalTrace(
+  state: SessionExecutionState,
+  traceLabels: { project_name: string | null; thread_name: string | null; idea_summary: string | null }
+): Record<string, unknown> {
+  const result = state.pipelineResult!;
+  return {
+    session_mode: state.sessionMode ?? null,
+    drive: state.selectedDrive ?? null,
+    project_id: state.selectedProjectId ?? null,
+    project_name: traceLabels.project_name ?? null,
+    idea_thread_id: state.selectedThreadId ?? null,
+    thread_name: traceLabels.thread_name ?? null,
+    idea_id: state.selectedIdeaId ?? null,
+    idea_summary: traceLabels.idea_summary ?? null,
+    artifact_id: null,
+    proposal_id: null,
+    proposal_type: null,
+    start_time: result.session.started_at,
+    end_time: result.session.ended_at ?? new Date().toISOString(),
+    selection_evidence: buildSelectionEvidence(state),
+  };
+}
+
+/**
+ * Update creative_session with trace and decision_summary (shared for full and minimal trace).
+ */
+async function persistSessionTrace(
+  supabase: SupabaseClient,
+  sessionId: string,
+  trace: Record<string, unknown>,
+  decisionSummary: DecisionSummary | Record<string, unknown>
+): Promise<{ updated: boolean; error?: string }> {
+  const { data, error } = await supabase
+    .from("creative_session")
+    .update({
+      trace,
+      decision_summary: decisionSummary as Record<string, unknown>,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("session_id", sessionId)
+    .select("session_id");
+  if (error) return { updated: false, error: error.message };
+  return { updated: (data?.length ?? 0) > 0 };
+}
+
+/**
+ * Persist minimal trace for no-artifact sessions. Updates existing row or inserts one so every session leaves a trace.
+ */
+async function persistMinimalSessionTrace(state: SessionExecutionState): Promise<SessionExecutionState> {
+  const supabase = state.supabase;
+  const result = state.pipelineResult;
+  if (!supabase || !result) return state;
+
+  const traceLabels = await getProjectThreadIdeaTraceLabels(
+    supabase,
+    state.selectedProjectId,
+    state.selectedThreadId,
+    state.selectedIdeaId
+  );
+  const trace = buildMinimalTrace(state, traceLabels);
+  const decisionSummary = state.decisionSummary;
+
+  const { updated, error } = await persistSessionTrace(
+    supabase,
+    result.session.session_id,
+    trace,
+    decisionSummary
+  );
+  if (error) {
+    const msg = `session minimal trace update failed: ${error}`;
+    console.warn("[session-runner]", msg, { session_id: result.session.session_id });
+    state = { ...state, warnings: [...state.warnings, msg] };
+  }
+  if (updated) return state;
+
+  const now = new Date().toISOString();
+  const sessionRow = {
+    session_id: result.session.session_id,
+    project_id: state.selectedProjectId ?? result.session.project_id,
+    mode: result.session.mode,
+    selected_drive: result.session.selected_drive,
+    title: result.session.title,
+    prompt_context: result.session.prompt_context,
+    reflection_notes: result.session.reflection_notes,
+    started_at: result.session.started_at,
+    ended_at: result.session.ended_at ?? now,
+    created_at: result.session.created_at,
+    updated_at: now,
+    trace,
+    decision_summary: decisionSummary,
+  };
+  const { error: insertError } = await supabase.from("creative_session").insert(sessionRow);
+  if (insertError) {
+    const msg = `session minimal trace insert failed: ${insertError.message}`;
+    console.warn("[session-runner]", msg, { session_id: result.session.session_id });
+    return { ...state, warnings: [...state.warnings, msg] };
+  }
+  return state;
+}
+
 async function writeTraceAndDeliberation(
   state: SessionExecutionState
 ): Promise<SessionExecutionState> {
@@ -1964,17 +2158,16 @@ async function writeTraceAndDeliberation(
     extension_classification: state.extension_classification ?? null,
     confidence_truth: state.confidence_truth ?? null,
     proposal_outcome: state.proposalOutcome ?? null,
+    selection_evidence: buildSelectionEvidence(state),
   };
-  const { error: traceUpdateError } = await supabase
-    .from("creative_session")
-    .update({
-      trace,
-      decision_summary: state.decisionSummary,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("session_id", result.session.session_id);
+  const { error: traceUpdateError } = await persistSessionTrace(
+    supabase,
+    result.session.session_id,
+    trace,
+    state.decisionSummary
+  );
   if (traceUpdateError) {
-    const msg = `session trace update failed: ${traceUpdateError.message}`;
+    const msg = `session trace update failed: ${traceUpdateError}`;
     console.warn("[session]", msg, { session_id: result.session.session_id });
     state = { ...state, warnings: [...state.warnings, msg] };
   }

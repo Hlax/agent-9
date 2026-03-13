@@ -15,7 +15,9 @@ import {
   getSessionContinuityTimeline,
   type SessionTimelineRow,
   type SessionClusteringSummary,
+  type SessionSelectionEvidenceDisplay,
 } from "@/lib/runtime-state-api";
+import { deriveThoughtMapSummary, type ThoughtMapSummary } from "@/lib/runtime-thought-map";
 
 interface TraceSession {
   session_id: string;
@@ -70,6 +72,10 @@ export default async function RuntimeDebugPage() {
   const { state, traces, deliberation, continuity, sessionTimeline, clusteringSummary } = await fetchRuntimeState();
   const latestDeliberation = deliberation?.trace ?? null;
   const health = continuity ? buildRuntimeHealthSummary(continuity.sessions ?? []) : null;
+  const thoughtMapSummary: ThoughtMapSummary | null =
+    sessionTimeline && sessionTimeline.length > 0 && clusteringSummary
+      ? deriveThoughtMapSummary(sessionTimeline, clusteringSummary)
+      : null;
   const activeIntent = (state as Record<string, unknown> | null)?.active_intent as {
     target_project_id?: string | null;
     target_thread_id?: string | null;
@@ -264,6 +270,166 @@ export default async function RuntimeDebugPage() {
                   </div>
                 )}
               </div>
+            )}
+          </section>
+          {thoughtMapSummary && (
+            <section
+              style={{
+                marginTop: "1rem",
+                border: "1px solid #ddd",
+                borderRadius: 8,
+                padding: "1rem",
+                background: "#f5f9f5",
+              }}
+            >
+              <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Session thought map</h2>
+              <p style={{ fontSize: "0.85rem", color: "#555", margin: "0 0 0.75rem" }}>
+                Interpreted summary of recent trajectory (observability only — does not feed any selector). Per governance: Stage 1.
+              </p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", fontSize: "0.9rem" }}>
+                <div>
+                  <strong>Session posture:</strong>{" "}
+                  <span
+                    style={{
+                      padding: "0.1rem 0.4rem",
+                      borderRadius: 4,
+                      background:
+                        thoughtMapSummary.session_posture === "exploratory"
+                          ? "#e8f4e8"
+                          : thoughtMapSummary.session_posture === "consolidating"
+                            ? "#e8eef8"
+                            : thoughtMapSummary.session_posture === "reflective"
+                              ? "#f0e8f8"
+                              : "#f0f0f0",
+                    }}
+                  >
+                    {thoughtMapSummary.session_posture}
+                  </span>
+                </div>
+                <div>
+                  <strong>Thread repeat rate:</strong>{" "}
+                  {thoughtMapSummary.thread_repeat_rate != null
+                    ? thoughtMapSummary.thread_repeat_rate.toFixed(2)
+                    : "—"}
+                </div>
+                <div>
+                  <strong>Longest thread streak:</strong> {thoughtMapSummary.longest_thread_streak}
+                </div>
+                <div>
+                  <strong>Trajectory shape:</strong> {thoughtMapSummary.trajectory_shape}
+                </div>
+                <div>
+                  <strong>Exploration vs consolidation:</strong> {thoughtMapSummary.exploration_vs_consolidation}
+                </div>
+                <div>
+                  <strong>Interpretation confidence:</strong>{" "}
+                  <span
+                    style={{
+                      color:
+                        thoughtMapSummary.interpretation_confidence === "high"
+                          ? "#282"
+                          : thoughtMapSummary.interpretation_confidence === "medium"
+                            ? "#666"
+                            : "#888",
+                    }}
+                  >
+                    {thoughtMapSummary.interpretation_confidence}
+                  </span>
+                  {" "}(&lt;5 low · 5–10 medium · &gt;10 high)
+                </div>
+                <div>
+                  <strong>Window sessions:</strong> {thoughtMapSummary.window_sessions}
+                </div>
+                <div style={{ width: "100%" }}>
+                  <strong>Proposal activity (last 10 sessions):</strong>{" "}
+                  {thoughtMapSummary.proposal_activity_summary.proposals_last_10_sessions} proposals
+                  {thoughtMapSummary.proposal_activity_summary.acceptance_rate != null
+                    ? ` · acceptance rate ${(thoughtMapSummary.proposal_activity_summary.acceptance_rate * 100).toFixed(0)}%`
+                    : ""}
+                </div>
+              </div>
+            </section>
+          )}
+          <section
+            style={{
+              marginTop: "1rem",
+              border: "1px solid #ddd",
+              borderRadius: 8,
+              padding: "1rem",
+              background: "#fafafa",
+            }}
+          >
+            <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Session selection evidence</h2>
+            <p style={{ fontSize: "0.85rem", color: "#555", margin: "0 0 0.75rem" }}>
+              Selection Evidence Ledger for the most recent sessions (observability only). Decision, mode, drive, selection source, and which signals were present vs used.
+            </p>
+            {sessionTimeline && sessionTimeline.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                {sessionTimeline.slice(0, 10).map((s) => {
+                  const ev = s.selection_evidence;
+                  if (!ev) {
+                    return (
+                      <div
+                        key={s.session_id}
+                        style={{
+                          padding: "0.5rem 0.75rem",
+                          background: "#f0f0f0",
+                          borderRadius: 6,
+                          fontSize: "0.85rem",
+                          color: "#666",
+                        }}
+                      >
+                        <span style={{ fontWeight: 600 }}>
+                          {new Date(s.created_at).toLocaleString(undefined, {
+                            month: "short",
+                            day: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                        {" — "}
+                        No selection evidence (legacy session or minimal trace).
+                      </div>
+                    );
+                  }
+                  return (
+                    <div
+                      key={s.session_id}
+                      style={{
+                        padding: "0.5rem 0.75rem",
+                        background: "#fff",
+                        border: "1px solid #eee",
+                        borderRadius: 6,
+                        fontSize: "0.85rem",
+                      }}
+                    >
+                      <div style={{ marginBottom: "0.35rem", fontWeight: 600, color: "#333" }}>
+                        {new Date(s.created_at).toLocaleString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem 1rem" }}>
+                        <span><strong>Decision:</strong> {ev.decision_summary ?? "—"}</span>
+                        <span><strong>Mode:</strong> {ev.selected_mode ?? "—"}</span>
+                        <span><strong>Drive:</strong> {ev.selected_drive ?? "—"}</span>
+                        <span><strong>Selection source:</strong> {ev.selection_source ?? "—"}</span>
+                        <span><strong>Selected thread:</strong> {ev.selected_thread_id ? `${String(ev.selected_thread_id).slice(0, 8)}…` : "—"}</span>
+                      </div>
+                      <div style={{ marginTop: "0.35rem", color: "#555" }}>
+                        <strong>Signals present:</strong> {ev.signals_present.length > 0 ? ev.signals_present.join(", ") : "—"}
+                      </div>
+                      <div style={{ color: "#555" }}>
+                        <strong>Signals used:</strong> {ev.signals_used.length > 0 ? ev.signals_used.join(", ") : "—"}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p style={{ fontSize: "0.9rem", color: "#666" }}>No session timeline data yet. Run sessions to see selection evidence.</p>
             )}
           </section>
           <section

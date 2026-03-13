@@ -498,6 +498,17 @@ export async function getRuntimeContinuityPayload(supabase: SupabaseClient | nul
 /** Thread transition relative to the adjacent older session (newest-first order). */
 export type ThreadTransition = "same-thread" | "thread-switch" | "no-thread";
 
+/** Selection evidence for display (v1 or v2 from trace.selection_evidence). */
+export interface SessionSelectionEvidenceDisplay {
+  decision_summary: string | null;
+  selection_source: string | null;
+  selected_thread_id: string | null;
+  selected_mode: string | null;
+  selected_drive: string | null;
+  signals_present: string[];
+  signals_used: string[];
+}
+
 /** One row in the Session Continuity Timeline (observability only). */
 export interface SessionTimelineRow {
   session_id: string;
@@ -514,6 +525,8 @@ export interface SessionTimelineRow {
   action_kind: string | null;
   proposal_created: boolean;
   has_artifact: boolean;
+  /** Selection evidence ledger (v1 or v2) for runtime panel. */
+  selection_evidence: SessionSelectionEvidenceDisplay | null;
   /** Derived: how this row's thread relates to the next (older) row. */
   thread_transition: ThreadTransition;
   /** Derived: length of consecutive same thread_id run including this row (0 if no thread). */
@@ -684,6 +697,22 @@ export async function getSessionContinuityTimeline(
     const rev = reviewBySession.get(row.session_id);
     const confidence =
       typeof d.confidence === "number" && Number.isFinite(d.confidence) ? (d.confidence as number) : null;
+    const se = t.selection_evidence as Record<string, unknown> | null | undefined;
+    const selection_evidence: SessionSelectionEvidenceDisplay | null = se
+      ? {
+          decision_summary:
+            (typeof se.decision_summary === "string" ? se.decision_summary : null) ??
+            (typeof d.next_action === "string" ? d.next_action : null),
+          selection_source:
+            typeof se.selection_source === "string" ? se.selection_source : null,
+          selected_thread_id:
+            typeof se.selected_thread_id === "string" ? se.selected_thread_id : se.selected_thread_id === null ? null : null,
+          selected_mode: typeof se.selected_mode === "string" ? se.selected_mode : se.selected_mode === null ? null : null,
+          selected_drive: typeof se.selected_drive === "string" ? se.selected_drive : se.selected_drive === null ? null : null,
+          signals_present: Array.isArray(se.signals_present) ? (se.signals_present as string[]) : [],
+          signals_used: Array.isArray(se.signals_used) ? (se.signals_used as string[]) : [],
+        }
+      : null;
     return {
       session_id: row.session_id,
       created_at: row.created_at,
@@ -699,6 +728,7 @@ export async function getSessionContinuityTimeline(
       action_kind: rev?.action_kind ?? null,
       proposal_created: Boolean(t.proposal_id),
       has_artifact: Boolean(t.artifact_id),
+      selection_evidence,
     };
   });
   const rows = attachThreadTransitionAndStreak(rowsBase);
