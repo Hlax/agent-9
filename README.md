@@ -2,15 +2,15 @@
 
 A governed creative system that explores identity through artifacts over time.
 
-This repository is for the **scaffolding and deployment foundation** of the Twin.
-The Twin generates, critiques, evaluates, remembers, and proposes.
-Harvey reviews, approves, stages, and publishes.
+## Intent
+
+This repo is the **scaffolding and deployment foundation** for the Twin. The **Twin** (the agent/system in this repo) generates, critiques, evaluates, remembers, and proposes. **Harvey** (the human operator) reviews, approves, stages, and publishes. Nothing reaches the public without going through staging and explicit approval. The intent is a clear split: the Twin suggests; Harvey decides.
 
 ## Product Surfaces
 
-- **Private Studio** — the private operator interface
-- **Habitat Staging** — the preview environment for staged artifacts and habitat concepts
-- **Public Habitat** — the curated public-facing site
+- **Private Studio** — where Harvey operates: review proposals by lane, preview staged habitat before publish, and approve or reject.
+- **Staging** — where candidate habitat and artifacts live until Harvey promotes them.
+- **Public Habitat** — the curated public face of the Twin; only content Harvey has approved for publication appears there.
 
 ## Core System Layers
 
@@ -63,9 +63,7 @@ The Public Habitat may initially be a blank white page with a large:
 
 ## Important Principle
 
-Approval and publication are not the same thing.
-Staging and public release are not the same thing.
-System proposals and implementation changes still require Harvey approval.
+Approval and publication are not the same thing. Staging and public release are not the same thing. System proposals and implementation changes still require Harvey approval.
 
 ---
 
@@ -109,8 +107,8 @@ artifacts/
 - `pnpm db:migrate` — apply Supabase migrations (requires Supabase CLI and local Supabase)
 - `pnpm db:reset` — reset local DB and reapply all migrations (verifies migrations apply cleanly)
 - `pnpm db:verify` — same as `db:reset` (alias for migration verification)
+- `pnpm test` — run tests across packages and apps
 
-### Review Lanes (Studio)
+### Studio (for Harvey)
 
-- **Artifact queue** — `/review/artifacts` — approve / approve_for_publication / publish (separate)
-- **Surface proposals** — `/review/surface` — avatar candidate and public habitat proposal review (first-class; use `proposal_record`, not artifact approval)
+Studio is the operator interface: review proposals by lane (habitat, artifacts, critiques, extensions, system), add notes and take actions, preview staged habitat before publish, then approve for publication when ready. Implementation details (routes, tables, snapshot flow) live in `docs/`.
