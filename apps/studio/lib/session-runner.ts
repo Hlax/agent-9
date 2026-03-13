@@ -73,6 +73,16 @@ import {
   type ActiveIntent,
   type IntentUpdateInput,
 } from "@/lib/session-intent";
+import {
+  getSessionContinuityTimeline,
+  computeSessionClusteringSummary,
+} from "@/lib/runtime-state-api";
+import { deriveThoughtMapSummary } from "@/lib/runtime-thought-map";
+import {
+  getTrajectoryFeedback,
+  type TrajectoryFeedbackResult,
+  type TrajectoryFeedbackContext,
+} from "@/lib/trajectory-feedback-adapter";
 
 function buildIntentUpdateInput(state: SessionExecutionState): IntentUpdateInput | null {
   const result = state.pipelineResult;
@@ -102,6 +112,25 @@ import {
 
 /** Create bucket "artifacts" in Supabase Dashboard â†’ Storage if missing. */
 const ARTIFACTS_BUCKET = "artifacts";
+
+/** Neutral evaluation signal for no-artifact sessions. Used so updateCreativeState can apply session-type signals (e.g. isReflection) while keeping score deltas minimal. */
+function neutralEvaluationSignalForNoArtifact(sessionId: string): EvaluationSignal {
+  const now = new Date().toISOString();
+  return {
+    evaluation_signal_id: crypto.randomUUID(),
+    target_type: "session",
+    target_id: sessionId,
+    alignment_score: 0.5,
+    emergence_score: 0.5,
+    fertility_score: 0.5,
+    pull_score: 0.5,
+    recurrence_score: 0.2,
+    resonance_score: 0.5,
+    rationale: "no-artifact session; neutral signal for state evolution",
+    created_at: now,
+    updated_at: now,
+  };
+}
 
 export type PreferredMedium = "writing" | "concept" | "image";
 
@@ -241,6 +270,11 @@ interface SessionExecutionState {
   synthesisPressure?: SynthesisPressurePayload | null;
   /** Active session intent (continuity layer). Set in loadCreativeStateAndBacklog when supabase is non-null. */
   activeIntent?: ActiveIntent | null;
+  /** Trajectory advisory (one bounded signal). Set in loadCreativeStateAndBacklog; may nudge mode via reflection_need in selectModeAndDrive. */
+  trajectoryAdvisory?: {
+    feedback: TrajectoryFeedbackResult;
+    interpretation_confidence: "low" | "medium" | "high";
+  } | null;
 }
 
 /**
@@ -401,12 +435,41 @@ async function loadCreativeStateAndBacklog(
     state.supabase != null ? await getSynthesisPressure(state.supabase) : null;
   const activeIntent =
     state.supabase != null ? await getActiveIntent(state.supabase) : null;
+
+  let trajectoryAdvisory: SessionExecutionState["trajectoryAdvisory"] = null;
+  if (state.supabase) {
+    try {
+      const { rows, clustering_summary } = await getSessionContinuityTimeline(state.supabase, 30);
+      if (rows.length > 0 && clustering_summary) {
+        const thoughtMap = deriveThoughtMapSummary(rows, clustering_summary);
+        const context: TrajectoryFeedbackContext = {
+          session_posture: thoughtMap.session_posture,
+          thread_repeat_rate: thoughtMap.thread_repeat_rate,
+          longest_thread_streak: thoughtMap.longest_thread_streak,
+          trajectory_shape: thoughtMap.trajectory_shape,
+          exploration_vs_consolidation: thoughtMap.exploration_vs_consolidation,
+          window_sessions: thoughtMap.window_sessions,
+          proposals_last_10_sessions: thoughtMap.proposal_activity_summary.proposals_last_10_sessions,
+          interpretation_confidence: thoughtMap.interpretation_confidence,
+        };
+        const feedback = getTrajectoryFeedback(context);
+        trajectoryAdvisory = {
+          feedback,
+          interpretation_confidence: thoughtMap.interpretation_confidence,
+        };
+      }
+    } catch (e) {
+      console.warn("[session-runner] trajectory advisory fetch failed (using neutral)", e);
+    }
+  }
+
   return {
     ...state,
     previousState,
     liveBacklog,
     synthesisPressure: synthesisPressure ?? undefined,
     activeIntent: activeIntent ?? undefined,
+    trajectoryAdvisory: trajectoryAdvisory ?? undefined,
   };
 }
 
@@ -436,6 +499,30 @@ function selectModeAndDrive(state: SessionExecutionState): SessionExecutionState
         recent_exploration_rate: Math.max(0, sessionState.recent_exploration_rate - 0.05),
       };
     }
+  }
+  // One bounded trajectory signal: repetition advisory → small reflection_need nudge (mode bias only when confidence sufficient).
+  const TRAJECTORY_REFLECTION_NUDGE = 0.06;
+  const adv = state.trajectoryAdvisory;
+  if (adv?.feedback.gently_reduce_repetition && adv.interpretation_confidence !== "low") {
+    sessionState = {
+      ...sessionState,
+      reflection_need: Math.min(1, Math.max(0, sessionState.reflection_need + TRAJECTORY_REFLECTION_NUDGE)),
+    };
+    console.log("[session] trajectory_advisory applied", {
+      source: "trajectory_feedback",
+      signal: "gently_reduce_repetition",
+      applied: true,
+      effect: `reflection_need +${TRAJECTORY_REFLECTION_NUDGE}`,
+      confidence: adv.interpretation_confidence,
+      reason: adv.feedback.reason,
+    });
+  } else if (adv && adv.feedback.gently_reduce_repetition && adv.interpretation_confidence === "low") {
+    console.log("[session] trajectory_advisory skipped (low confidence)", {
+      source: "trajectory_feedback",
+      signal: "gently_reduce_repetition",
+      applied: false,
+      reason: "interpretation_confidence is low; neutral fallback",
+    });
   }
   const sessionMode = computeSessionMode(sessionState);
   const driveWeights = computeDriveWeights(sessionState);
@@ -625,6 +712,7 @@ async function selectFocus(state: SessionExecutionState): Promise<SessionExecuti
           project: selectedProjectId,
           thread: selectedThreadId,
           idea: selectedIdeaId,
+          continuity: "weighted by idea_thread/idea recurrence_score and creative_pull (see CONTINUITY_RECURRENCE_AUDIT.md)",
         });
       }
     }
@@ -1038,11 +1126,14 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
         await updateSessionIntent(supabase, intentInput, state.activeIntent ?? null);
       }
       // Step 1 (loop closure): persist creative_state_snapshot so next session sees updated state.
-      const noArtifactSnapshotRow = stateToSnapshotRow(
-        state.previousState,
-        sessionId,
-        null
-      );
+      // Same canonical contract as artifact path: evolve state then persist via stateToSnapshotRow.
+      // No-artifact evolution: neutral evaluation + session-type signals (e.g. reflect reduces reflection_need).
+      const noArtifactEval = neutralEvaluationSignalForNoArtifact(sessionId);
+      const noArtifactNextState = updateCreativeState(state.previousState, noArtifactEval, {
+        isReflection: state.sessionMode === "reflect",
+        repetitionDetected: state.repetitionDetected ?? false,
+      });
+      const noArtifactSnapshotRow = stateToSnapshotRow(noArtifactNextState, sessionId, null);
       const { error: noArtifactStateError } = await supabase
         .from("creative_state_snapshot")
         .insert(noArtifactSnapshotRow);
@@ -1439,8 +1530,9 @@ async function persistDerivedState(state: SessionExecutionState): Promise<Sessio
   }
   memoryRecordCreated = true;
 
-  // Recurrence writeback: same idea/idea_thread IDs used in focus selection get updated so the next
-  // session's selectProjectAndThread (project-thread-selection) can weight them by recurrence_score.
+  // Recurrence writeback: same idea/idea_thread used in focus selection get recurrence_score (and
+  // creative_pull on artifact) updated so the next session's selectProjectAndThread weights them.
+  // Continuity audit: docs/05_build/CONTINUITY_RECURRENCE_AUDIT.md.
   if (state.selectedIdeaId && evaluation.recurrence_score !== null) {
     const { error: ideaRecurrenceError } = await supabase
       .from("idea")

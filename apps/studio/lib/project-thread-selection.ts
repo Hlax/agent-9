@@ -1,6 +1,11 @@
 /**
  * Select project, idea thread, and optionally one idea for a session.
  * Canon: session_loop.md — "Select Project / Thread / Idea".
+ *
+ * Continuity audit: recurrence_score and creative_pull on idea_thread/idea are written by
+ * session-runner persistDerivedState (after artifact sessions). Here we read them and weight
+ * thread/idea choice so repeated threads get higher likelihood of selection. See
+ * docs/05_build/CONTINUITY_RECURRENCE_AUDIT.md.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
