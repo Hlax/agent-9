@@ -1892,6 +1892,20 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
 }
 
 /** Canonical signal keys for Selection Evidence Ledger v2. */
+/**
+ * Current signal keys recorded in the Selection Evidence Ledger.
+ *
+ * Planned future additions (Stage-2+):
+ *   "intent_health"          — session intent alignment quality
+ *   "proposal_governance"    — proposal FSM pressure signal
+ *   "thought_map_advisory"   — advisory hint from trajectory adapter (dry-run → active at Stage-2)
+ *   "medium_learning"        — medium execution success/failure signal
+ *   "habitat_selection"      — habitat payload influence
+ *
+ * When adding a new key: append here, add detection logic in buildSelectionEvidence,
+ * and update the used-signal inference block. Backward compatibility is maintained
+ * via the signals_present/signals_used derived arrays.
+ */
 const SELECTION_EVIDENCE_SIGNAL_KEYS = [
   "backlog_pressure",
   "recurrence_signal",
@@ -1905,7 +1919,13 @@ export type SelectionEvidenceV2 = {
   version: 2;
   signals: Record<
     (typeof SELECTION_EVIDENCE_SIGNAL_KEYS)[number],
-    { present: boolean; used: boolean }
+    /**
+     * present: signal was detectable in the runtime state at selection time.
+     * used: signal materially influenced the selection decision.
+     * influence_strength: reserved for Stage-2 — bounded 0–1 weight when the signal
+     *   actively biases selection. Not yet set; omitted until Stage-2 wires it.
+     */
+    { present: boolean; used: boolean; influence_strength?: number }
   >;
   decision_summary: string;
   selection_source: string;
@@ -2000,6 +2020,8 @@ function buildMinimalTrace(
     proposal_type: null,
     start_time: result.session.started_at,
     end_time: result.session.ended_at ?? new Date().toISOString(),
+    /** trace_kind distinguishes minimal (no-artifact) from full traces in the ledger. */
+    trace_kind: "minimal" as const,
     selection_evidence: buildSelectionEvidence(state),
   };
 }
@@ -2158,6 +2180,8 @@ async function writeTraceAndDeliberation(
     extension_classification: state.extension_classification ?? null,
     confidence_truth: state.confidence_truth ?? null,
     proposal_outcome: state.proposalOutcome ?? null,
+    /** trace_kind distinguishes full (artifact-producing) from minimal traces in the ledger. */
+    trace_kind: "full" as const,
     selection_evidence: buildSelectionEvidence(state),
   };
   const { error: traceUpdateError } = await persistSessionTrace(
