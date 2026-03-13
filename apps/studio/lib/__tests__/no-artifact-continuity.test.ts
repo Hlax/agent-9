@@ -245,5 +245,5 @@ describe("no-artifact session continuity — runtime_intent", () => {
     expect(active!.intent_kind).toBe("reflect");
     expect(active!.source_session_id).toBe(input.sessionId);
   });
-}
+});
 

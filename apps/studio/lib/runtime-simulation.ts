@@ -41,7 +41,14 @@ export interface SimulationInputs {
   /** Whether this scenario is cron-triggered (affects medium derivation). */
   isCron?: boolean;
   /** Critique outcome label (e.g. continue, reflect, archive_candidate, shift_medium, stop). */
-  critiqueOutcome?: string | null;
+  critiqueOutcome?:
+    | "continue"
+    | "branch"
+    | "shift_medium"
+    | "reflect"
+    | "archive_candidate"
+    | "stop"
+    | null;
   /** Critique medium_fit_note text used to derive capability-fit. */
   critiqueMediumFitNote?: string | null;
   /** Decision confidence to use when computing proposal confidence thresholds. */
@@ -168,16 +175,22 @@ function simulateModeAndDriveFromState(
 
 /** Internal: minimal critique stub for applyCapabilityFit. */
 function buildCritiqueForSimulation(
-  outcome: string | null | undefined,
+  outcome:
+    | "continue"
+    | "branch"
+    | "shift_medium"
+    | "reflect"
+    | "archive_candidate"
+    | "stop"
+    | null
+    | undefined,
   mediumFitNote: string | null | undefined
 ): CritiqueRecord {
   const now = new Date().toISOString();
   return {
-    critique_id: "sim-critique",
-    target_type: "artifact",
-    target_id: "sim-artifact",
-    created_at: now,
-    updated_at: now,
+    critique_record_id: "sim-critique",
+    artifact_id: "sim-artifact",
+    session_id: null,
     critique_outcome: outcome ?? "continue",
     intent_note: null,
     strength_note: null,
@@ -188,6 +201,8 @@ function buildCritiqueForSimulation(
     coherence_note: null,
     fertility_note: null,
     overall_summary: null,
+    created_at: now,
+    updated_at: now,
   };
 }
 

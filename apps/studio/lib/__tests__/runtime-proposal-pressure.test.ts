@@ -40,5 +40,5 @@ describe("computeProposalConfidenceMin — bounded proposal_pressure influence",
     expect(nearBottom).toBeGreaterThanOrEqual(0);
     expect(nearBottom).toBeLessThanOrEqual(1);
   });
-}
+});
 

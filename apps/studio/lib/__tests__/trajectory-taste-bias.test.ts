@@ -1,3 +1,4 @@
+import { describe, it, expect } from "vitest";
 import {
   computeTasteByActionKind,
   getTasteForAction,
@@ -72,7 +73,7 @@ describe("trajectory-taste-bias", () => {
       ];
       const tasteStrong = computeTasteByActionKind(rowsStrong, { minReviewsForTaste: 2 });
       const tasteWeak = computeTasteByActionKind(rowsWeak, { minReviewsForTaste: 2 });
-      expect(tasteStrong["a"]).toBeGreaterThan(tasteWeak["a"]);
+      expect(tasteStrong["a"] ?? 0).toBeGreaterThan(tasteWeak["a"] ?? 0);
     });
   });
 

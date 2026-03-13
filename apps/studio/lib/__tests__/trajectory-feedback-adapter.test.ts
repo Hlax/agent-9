@@ -1,3 +1,5 @@
+import { describe, it, expect } from "vitest";
+
 /**
  * Acceptance tests for the trajectory feedback adapter.
  *
