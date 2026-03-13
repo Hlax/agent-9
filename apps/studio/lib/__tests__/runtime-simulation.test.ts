@@ -453,7 +453,6 @@ describe("simulateSessionDecision — canonical scenario catalog", () => {
     expect(lowPressure.proposal_outcome).toBe("eligible");
     expect(highPressure.proposal_outcome).toBe("skipped_confidence");
   });
-
   it("image medium scenario: executed_medium is image, lane_type is null", () => {
     const result = simulateSessionDecision({
       previousState: defaultCreativeState(),
@@ -622,11 +621,18 @@ describe("runScenario — fixture loader", () => {
   it("runs a named fixture and returns the same result as simulateSessionDecision", () => {
     const inputs = {
       previousState: defaultCreativeState(),
+=======
+  it("generates structured habitat proposals when habitatContext is provided", () => {
+    const previousState = defaultCreativeState();
+    const result = simulateSessionDecision({
+      previousState,
+>>>>>>> 56462b2 (f1)
       liveBacklog: 0,
       synthesisPressure: makeSynthesisPressure(),
       activeIntent: null,
       trajectoryAdvisory: null,
       runtimeTrajectory: makeRuntimeTrajectory({ proposal_pressure: "normal" }),
+<<<<<<< HEAD
       preferMedium: "writing" as const,
       isCron: false,
       critiqueOutcome: "continue" as const,
@@ -796,6 +802,44 @@ describe("compareSimulationResults — structured output diffing", () => {
     expect(pressureEntry).toBeDefined();
     expect(pressureEntry?.a).toBe("low");
     expect(pressureEntry?.b).toBe("high");
+  });
+});
+
+describe("simulateSessionDecision — habitat proposals", () => {
+  it("generates structured habitat proposals when habitatContext is provided", () => {
+    const previousState = defaultCreativeState();
+    const result = simulateSessionDecision({
+      previousState,
+      liveBacklog: 0,
+      synthesisPressure: makeSynthesisPressure(),
+      activeIntent: null,
+      trajectoryAdvisory: null,
+      runtimeTrajectory: makeRuntimeTrajectory({ proposal_pressure: "normal" }),
+      preferMedium: "concept",
+      isCron: false,
+      critiqueOutcome: "continue",
+      critiqueMediumFitNote: null,
+      decisionConfidence: 0.8,
+      artifactMedium: "concept",
+      conceptTargetSurface: "staging_habitat",
+      habitatContext: {
+        identityId: "identity-1",
+        previousFocus: "Earlier focus",
+        currentFocus: "Closing the first publish governance loop",
+        milestoneArtifact: {
+          artifact_id: "art-1",
+          title: "Stage 2 editing workflow complete",
+          summary:
+            "Added bounded staging edits, publish review, and promotion flow.",
+          isMilestone: true,
+        },
+      },
+    });
+
+    expect(result.habitat_proposal_count).toBeGreaterThanOrEqual(2);
+    const types = result.habitat_proposal_types.sort();
+    expect(types).toContain("add_recent_artifact");
+    expect(types).toContain("add_summary_block");
   });
 });
 

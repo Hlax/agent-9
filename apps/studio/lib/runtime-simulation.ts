@@ -19,6 +19,11 @@ import type {
 } from "@twin/mediums";
 import { resolveExecutedMedium, applyCapabilityFit, computeProposalConfidenceMin } from "./session-runner";
 import { classifyProposalLane, type LaneType } from "./proposal-governance";
+import {
+  generateHabitatProposals,
+  type HabitatProposalV1,
+  type HabitatProposalGenerationContext,
+} from "./habitat-proposal";
 
 export interface SimulationInputs {
   /** Creative state from latest snapshot (continuity input). */
@@ -60,6 +65,21 @@ export interface SimulationInputs {
    * When omitted, defaults to "staging_habitat" for concept artifacts.
    */
   conceptTargetSurface?: string | null;
+  /**
+   * Optional context for generating structured habitat proposals (home surface).
+   * When omitted, no habitat proposals are generated.
+   */
+  habitatContext?: {
+    identityId: string | null;
+    previousFocus: string | null;
+    currentFocus: string | null;
+    milestoneArtifact?: {
+      artifact_id: string;
+      title: string | null;
+      summary: string | null;
+      isMilestone: boolean;
+    } | null;
+  };
 }
 
 export interface SimulationResult {
@@ -91,6 +111,10 @@ export interface SimulationResult {
   proposal_outcome: "none" | "eligible" | "skipped_confidence";
   /** Structured observability trace for this simulation run. */
   trace: SimulationTrace;
+  /** Structured habitat proposals (home surface) generated for this scenario. */
+  habitat_proposals: HabitatProposalV1[];
+  habitat_proposal_count: number;
+  habitat_proposal_types: ("update_current_focus" | "add_recent_artifact" | "add_summary_block")[];
 }
 
 /**
@@ -171,6 +195,9 @@ export function compareSimulationResults(
     "lane_type",
     "target_surface",
     "proposal_outcome",
+    "habitat_proposals",
+    "habitat_proposal_count",
+    "habitat_proposal_types",
   ];
 
   for (const key of keysToCompare) {
@@ -182,6 +209,12 @@ export function compareSimulationResults(
   }
 
   return { changed, unchanged };
+=======
+  /** Structured habitat proposals (home surface) generated for this scenario. */
+  habitat_proposals: HabitatProposalV1[];
+  habitat_proposal_count: number;
+  habitat_proposal_types: ("update_current_focus" | "add_recent_artifact" | "add_summary_block")[];
+>>>>>>> 56462b2 (f1)
 }
 
 /** Internal: apply the same soft biases as selectModeAndDrive, but in a pure helper. */
@@ -407,6 +440,20 @@ export function simulateSessionDecision(inputs: SimulationInputs): SimulationRes
     fallback_reason,
   });
 
+  // Structured habitat proposals (home surface, lab-ingestible).
+  const habitat_proposals: HabitatProposalV1[] = inputs.habitatContext
+    ? generateHabitatProposals({
+        identityId: inputs.habitatContext.identityId,
+        sessionId,
+        milestoneArtifact: inputs.habitatContext.milestoneArtifact ?? null,
+        previousFocus: inputs.habitatContext.previousFocus,
+        currentFocus: inputs.habitatContext.currentFocus,
+        decisionConfidence,
+      })
+    : [];
+  const habitat_proposal_count = habitat_proposals.length;
+  const habitat_proposal_types = habitat_proposals.map((p) => p.change_type);
+
   return {
     mode,
     drive,
@@ -426,6 +473,9 @@ export function simulateSessionDecision(inputs: SimulationInputs): SimulationRes
     target_surface,
     proposal_outcome,
     trace,
+    habitat_proposals,
+    habitat_proposal_count,
+    habitat_proposal_types,
   };
 }
 
