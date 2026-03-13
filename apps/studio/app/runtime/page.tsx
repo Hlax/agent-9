@@ -13,9 +13,11 @@ import {
   getRuntimeDeliberationPayload,
   getRuntimeContinuityPayload,
   getSessionContinuityTimeline,
+  deriveTrajectoryAdvisoryDryRun,
   type SessionTimelineRow,
   type SessionClusteringSummary,
   type SessionSelectionEvidenceDisplay,
+  type TrajectoryAdvisoryLog,
 } from "@/lib/runtime-state-api";
 import { deriveThoughtMapSummary, type ThoughtMapSummary } from "@/lib/runtime-thought-map";
 
@@ -76,6 +78,10 @@ export default async function RuntimeDebugPage() {
     sessionTimeline && sessionTimeline.length > 0 && clusteringSummary
       ? deriveThoughtMapSummary(sessionTimeline, clusteringSummary)
       : null;
+  /** Stage-2 advisory dry run (observability only — does NOT influence any selector). */
+  const advisoryDryRun: TrajectoryAdvisoryLog | null = thoughtMapSummary
+    ? deriveTrajectoryAdvisoryDryRun(thoughtMapSummary)
+    : null;
   const activeIntent = (state as Record<string, unknown> | null)?.active_intent as {
     target_project_id?: string | null;
     target_thread_id?: string | null;
@@ -350,6 +356,74 @@ export default async function RuntimeDebugPage() {
               </div>
             </section>
           )}
+          {advisoryDryRun && (
+            <section
+              style={{
+                marginTop: "1rem",
+                border: "1px solid #c8e0c8",
+                borderRadius: 8,
+                padding: "1rem",
+                background: "#f0f7f0",
+              }}
+            >
+              <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>
+                Stage-2 trajectory adapter{" "}
+                <span
+                  style={{
+                    display: "inline-block",
+                    padding: "0.1rem 0.4rem",
+                    borderRadius: 4,
+                    fontSize: "0.7rem",
+                    background: "#d4edda",
+                    color: "#155724",
+                    fontWeight: 600,
+                    verticalAlign: "middle",
+                  }}
+                >
+                  DRY RUN
+                </span>
+              </h2>
+              <p style={{ fontSize: "0.85rem", color: "#555", margin: "0 0 0.75rem" }}>
+                Advisory output from the trajectory feedback adapter (observability only). This output does{" "}
+                <strong>not</strong> influence any selection path. Stage-1 contract is preserved.
+              </p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem 1.5rem", fontSize: "0.9rem" }}>
+                <span>
+                  <strong>Reduce repetition:</strong>{" "}
+                  <span
+                    style={{
+                      color: advisoryDryRun.feedback.gently_reduce_repetition ? "#a60" : "#555",
+                      fontWeight: advisoryDryRun.feedback.gently_reduce_repetition ? 600 : 400,
+                    }}
+                  >
+                    {advisoryDryRun.feedback.gently_reduce_repetition ? "yes" : "no"}
+                  </span>
+                </span>
+                <span>
+                  <strong>Favor consolidation:</strong>{" "}
+                  <span
+                    style={{
+                      color: advisoryDryRun.feedback.favor_consolidation !== "none" ? "#228" : "#555",
+                      fontWeight: advisoryDryRun.feedback.favor_consolidation !== "none" ? 600 : 400,
+                    }}
+                  >
+                    {advisoryDryRun.feedback.favor_consolidation}
+                  </span>
+                </span>
+                <span>
+                  <strong>Proposal pressure adjustment:</strong>{" "}
+                  {advisoryDryRun.feedback.proposal_pressure_adjustment > 0 ? "+" : ""}
+                  {advisoryDryRun.feedback.proposal_pressure_adjustment}
+                </span>
+              </div>
+              <div style={{ marginTop: "0.5rem", fontSize: "0.85rem", color: "#444" }}>
+                <strong>Reason:</strong> {advisoryDryRun.feedback.reason}
+              </div>
+              <div style={{ marginTop: "0.35rem", fontSize: "0.75rem", color: "#888", fontStyle: "italic" }}>
+                {advisoryDryRun.note}
+              </div>
+            </section>
+          )}
           <section
             style={{
               marginTop: "1rem",
@@ -403,13 +477,30 @@ export default async function RuntimeDebugPage() {
                         fontSize: "0.85rem",
                       }}
                     >
-                      <div style={{ marginBottom: "0.35rem", fontWeight: 600, color: "#333" }}>
-                        {new Date(s.created_at).toLocaleString(undefined, {
-                          month: "short",
-                          day: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
+                      <div style={{ marginBottom: "0.35rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                        <span style={{ fontWeight: 600, color: "#333" }}>
+                          {new Date(s.created_at).toLocaleString(undefined, {
+                            month: "short",
+                            day: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                        {ev.trace_kind && (
+                          <span
+                            style={{
+                              display: "inline-block",
+                              padding: "0.1rem 0.35rem",
+                              borderRadius: 4,
+                              fontSize: "0.7rem",
+                              background: ev.trace_kind === "full" ? "#e8f4e8" : "#f0f0f0",
+                              color: ev.trace_kind === "full" ? "#282" : "#666",
+                            }}
+                            title={ev.trace_kind === "full" ? "Full trace: session produced an artifact and critique" : "Minimal trace: no-artifact session"}
+                          >
+                            {ev.trace_kind}
+                          </span>
+                        )}
                       </div>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem 1rem" }}>
                         <span><strong>Decision:</strong> {ev.decision_summary ?? "—"}</span>

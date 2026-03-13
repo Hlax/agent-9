@@ -1,11 +1,59 @@
 /**
- * Stage-2 advisory feedback adapter (dry run only)
+ * Stage-2 advisory feedback adapter (dry run only).
  * Not wired into runtime selection paths.
  *
- * Placeholder module for future trajectory feedback (e.g. repetition reduction,
- * consolidation bias, proposal pressure). Must NOT affect selection logic.
+ * This module MAY read from the thought map summary (Stage-1 output) for advisory
+ * purposes, but its output MUST NOT reach any selector: not mode, drive, focus,
+ * proposal eligibility, proposal pressure, or selection source.
+ *
+ * Stage-1 contract: "thought map must not influence selectors yet."
+ *
+ * Safe insertion point: call `buildAdvisoryLog` after a session completes
+ * (e.g. in runtime-state-api for display, or as a post-run observability step).
+ * NEVER call from session-runner selection paths or mode/drive logic.
+ *
+ * Signals the adapter reads (observability only):
+ *   - session_posture (from thought map)
+ *   - thread_repeat_rate / longest_thread_streak (clustering)
+ *   - trajectory_shape / exploration_vs_consolidation (clustering)
+ *   - proposals_last_10_sessions (activity summary)
+ *   - interpretation_confidence (to gate on data quality)
+ *
+ * Where it logs advisory output:
+ *   - runtime-state-api: `deriveTrajectoryAdvisoryDryRun` for the debug panel
+ *   - NOT in session trace, NOT in selection_evidence, NOT in decision_summary
+ *
+ * Where it must NOT connect yet:
+ *   - session-runner (any path)
+ *   - mode/drive selectors
+ *   - proposal eligibility or pressure
+ *   - selection source logic
  */
 
+/**
+ * Read-only snapshot from the thought map passed into the adapter.
+ * All fields are optional so callers can pass partial data safely.
+ */
+export interface TrajectoryFeedbackContext {
+  /** Dominant posture over the window (from thought map, observability only). */
+  session_posture?: "exploratory" | "consolidating" | "reflective" | "mixed" | null;
+  /** (# same-thread pairs) / (# comparable pairs); null when insufficient data. */
+  thread_repeat_rate?: number | null;
+  /** Max consecutive sessions on same thread in the window. */
+  longest_thread_streak?: number;
+  /** Shape label from clustering (descriptive). */
+  trajectory_shape?: "scattered" | "light" | "clustered" | "sticky" | "unknown" | null;
+  /** Whether window is exploration-heavy, consolidation-heavy, or balanced. */
+  exploration_vs_consolidation?: "exploration-heavy" | "consolidation-heavy" | "balanced" | null;
+  /** Number of sessions in the thought map window. */
+  window_sessions?: number;
+  /** Number of proposals created in the last 10 sessions. */
+  proposals_last_10_sessions?: number;
+  /** Strength of thought map interpretation based on window size. */
+  interpretation_confidence?: "low" | "medium" | "high" | null;
+}
+
+/** Advisory output from the adapter (dry run; never feeds selectors). */
 export interface TrajectoryFeedbackResult {
   gently_reduce_repetition: boolean;
   favor_consolidation: "none" | "light" | "strong";
@@ -14,13 +62,101 @@ export interface TrajectoryFeedbackResult {
 }
 
 /**
- * Dry-run only. Returns neutral feedback. Do not import from session-runner or selection paths.
+ * Structured dry-run log entry for runtime observability.
+ * Stored and displayed for debugging only — must NOT influence any selection path.
  */
-export function getTrajectoryFeedback(_context: unknown): TrajectoryFeedbackResult {
+export interface TrajectoryAdvisoryLog {
+  /** Always true: this output is observability-only and must never feed selectors. */
+  dry_run: true;
+  /** The advisory output for this window. */
+  feedback: TrajectoryFeedbackResult;
+  /** Snapshot of the context used to derive feedback (for auditability). */
+  context_snapshot: TrajectoryFeedbackContext;
+  /** ISO timestamp when the log was produced. */
+  generated_at: string;
+  /** Human-readable note about the Stage-2 contract. */
+  note: string;
+}
+
+/**
+ * Dry-run advisory function. Returns neutral or light advisory feedback based on
+ * the thought map context. Does NOT affect any selection path.
+ *
+ * When `interpretation_confidence` is "low" or the window is too small (<5 sessions),
+ * always returns neutral feedback to avoid acting on insufficient data.
+ */
+export function getTrajectoryFeedback(context: TrajectoryFeedbackContext): TrajectoryFeedbackResult {
+  const confidence = context.interpretation_confidence ?? "low";
+  const windowSessions = context.window_sessions ?? 0;
+
+  // Gate: insufficient data → always neutral.
+  if (confidence === "low" || windowSessions < 5) {
+    return {
+      gently_reduce_repetition: false,
+      favor_consolidation: "none",
+      proposal_pressure_adjustment: 0,
+      reason: "insufficient data for advisory (window too small or low confidence)",
+    };
+  }
+
+  const repeatRate = context.thread_repeat_rate ?? 0;
+  const posture = context.session_posture ?? "mixed";
+  const shape = context.trajectory_shape ?? "unknown";
+  const balance = context.exploration_vs_consolidation ?? "balanced";
+  const longestStreak = context.longest_thread_streak ?? 0;
+  const proposalsRecent = context.proposals_last_10_sessions ?? 0;
+
+  let gently_reduce_repetition = false;
+  let favor_consolidation: TrajectoryFeedbackResult["favor_consolidation"] = "none";
+  let proposal_pressure_adjustment = 0;
+  const reasons: string[] = [];
+
+  // Repetition advisory: sticky trajectory with long streak.
+  if (shape === "sticky" || repeatRate > 0.7) {
+    gently_reduce_repetition = true;
+    reasons.push("sticky thread repeat rate");
+  }
+  if (longestStreak >= 5) {
+    gently_reduce_repetition = true;
+    reasons.push(`longest streak ${longestStreak}`);
+  }
+
+  // Consolidation advisory: exploration-heavy posture with many recent proposals.
+  if (balance === "exploration-heavy" && proposalsRecent >= 5) {
+    favor_consolidation = "light";
+    reasons.push("exploration-heavy with proposal backlog");
+  } else if (posture === "consolidating" && shape === "clustered") {
+    favor_consolidation = "light";
+    reasons.push("consolidating posture in clustered window");
+  }
+
+  // Proposal pressure advisory: low production despite healthy clustering.
+  if (proposalsRecent === 0 && shape === "clustered" && windowSessions >= 8) {
+    proposal_pressure_adjustment = 1;
+    reasons.push("no proposals in clustered window");
+  }
+
+  if (reasons.length === 0) reasons.push("trajectory within normal range");
+
   return {
-    gently_reduce_repetition: false,
-    favor_consolidation: "none",
-    proposal_pressure_adjustment: 0,
-    reason: "dry-run only",
+    gently_reduce_repetition,
+    favor_consolidation,
+    proposal_pressure_adjustment,
+    reason: reasons.join("; "),
+  };
+}
+
+/**
+ * Build a structured advisory log entry for runtime observability.
+ * Safe to call from runtime-state-api after fetching the thought map.
+ * MUST NOT be called from session-runner or any selection path.
+ */
+export function buildAdvisoryLog(context: TrajectoryFeedbackContext): TrajectoryAdvisoryLog {
+  return {
+    dry_run: true,
+    feedback: getTrajectoryFeedback(context),
+    context_snapshot: context,
+    generated_at: new Date().toISOString(),
+    note: "Stage-2 advisory adapter (dry run). Output is observability-only and does NOT influence any selection path. Safe insertion point: runtime debug panel only.",
   };
 }

@@ -17,6 +17,12 @@ import {
   type ProposalRelationshipKind,
 } from "@/lib/proposal-relationship";
 import { buildConceptFamilies, type ConceptFamilyRuntimeSummary } from "@/lib/proposal-families";
+import {
+  buildAdvisoryLog,
+  type TrajectoryAdvisoryLog,
+  type TrajectoryFeedbackContext,
+} from "@/lib/trajectory-feedback-adapter";
+import type { ThoughtMapSummary } from "@/lib/runtime-thought-map";
 
 export async function getRuntimeStatePayload(supabase: SupabaseClient | null) {
   if (!supabase) {
@@ -507,6 +513,8 @@ export interface SessionSelectionEvidenceDisplay {
   selected_drive: string | null;
   signals_present: string[];
   signals_used: string[];
+  /** "full" when the session produced an artifact+critique; "minimal" for no-artifact sessions. Legacy traces will be null. */
+  trace_kind: "full" | "minimal" | null;
 }
 
 /** One row in the Session Continuity Timeline (observability only). */
@@ -698,6 +706,9 @@ export async function getSessionContinuityTimeline(
     const confidence =
       typeof d.confidence === "number" && Number.isFinite(d.confidence) ? (d.confidence as number) : null;
     const se = t.selection_evidence as Record<string, unknown> | null | undefined;
+    let traceKind: "full" | "minimal" | null = null;
+    if (t.trace_kind === "full") traceKind = "full";
+    else if (t.trace_kind === "minimal") traceKind = "minimal";
     const selection_evidence: SessionSelectionEvidenceDisplay | null = se
       ? {
           decision_summary:
@@ -711,6 +722,7 @@ export async function getSessionContinuityTimeline(
           selected_drive: typeof se.selected_drive === "string" ? se.selected_drive : se.selected_drive === null ? null : null,
           signals_present: Array.isArray(se.signals_present) ? (se.signals_present as string[]) : [],
           signals_used: Array.isArray(se.signals_used) ? (se.signals_used as string[]) : [],
+          trace_kind: traceKind,
         }
       : null;
     return {
@@ -735,3 +747,29 @@ export async function getSessionContinuityTimeline(
   const clustering_summary = computeSessionClusteringSummary(rows);
   return { rows, clustering_summary };
 }
+
+/**
+ * Derive the Stage-2 trajectory advisory dry-run output from a thought map summary.
+ *
+ * Safe insertion point: call this in the runtime debug page or observability API only.
+ * MUST NOT be called from session-runner or any selection path.
+ *
+ * Stage-1 contract preserved: this function only reads thought map data (already
+ * computed from historical traces) and calls the adapter's dry-run function.
+ * Its output is observability-only and does not influence any selector.
+ */
+export function deriveTrajectoryAdvisoryDryRun(thoughtMap: ThoughtMapSummary): TrajectoryAdvisoryLog {
+  const context: TrajectoryFeedbackContext = {
+    session_posture: thoughtMap.session_posture,
+    thread_repeat_rate: thoughtMap.thread_repeat_rate,
+    longest_thread_streak: thoughtMap.longest_thread_streak,
+    trajectory_shape: thoughtMap.trajectory_shape,
+    exploration_vs_consolidation: thoughtMap.exploration_vs_consolidation,
+    interpretation_confidence: thoughtMap.interpretation_confidence,
+    window_sessions: thoughtMap.window_sessions,
+    proposals_last_10_sessions: thoughtMap.proposal_activity_summary.proposals_last_10_sessions,
+  };
+  return buildAdvisoryLog(context);
+}
+
+export type { TrajectoryAdvisoryLog };
