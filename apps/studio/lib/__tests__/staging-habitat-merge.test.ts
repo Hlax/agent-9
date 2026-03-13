@@ -238,9 +238,15 @@ import { promoteStagingToPublic } from "../staging-composition";
 
 /**
  * Build a minimal Supabase mock for promoteStagingToPublic tests.
- * The proposal_record table is called twice: once for update, once for the
- * post-update count query. The mock tracks call order on `from("proposal_record")`
- * to return the correct chain for each call.
+ *
+ * The proposal_record table is called three times when source proposals exist:
+ *   1. Eligibility select: .select("...").in([sourceIds]).in([states]) → proposal rows
+ *   2. Update: .update({proposal_state:"published",...}).in([eligibleIds]) → { error }
+ *   3. Count select: .select("...", {count}).in([ids]).eq("proposal_state","published") → { count }
+ *
+ * The identity table is called once by getActiveIdentityId; the mock returns null
+ * (no active identity) so the snapshot lineage block inside promoteStagingToPublic
+ * is skipped. This keeps tests focused on the promotion logic itself.
  */
 function buildPromoteMock({
   stagingRows = [
@@ -253,22 +259,33 @@ function buildPromoteMock({
   promotionInsertError = null as null | { message: string },
   promotionId = "promo-1",
 } = {}) {
-  // Update chain: .update().in().in() → { error }
+  // Update chain: .update({...}).in([ids]) → { error }
   const mockProposalUpdate = vi.fn(() => ({
-    in: vi.fn(() => ({
-      in: vi.fn(() => Promise.resolve({ error: proposalUpdateError })),
-    })),
+    in: vi.fn(() => Promise.resolve({ error: proposalUpdateError })),
   }));
 
-  // Count chain: .select(..., {count, head}).in().eq() → { count, error }
+  // Count chain: .select(..., {count, head}).in([ids]).eq(...) → { count, error }
   const mockProposalSelect = vi.fn(() => ({
     in: vi.fn(() => ({
       eq: vi.fn(() => Promise.resolve({ count: proposalUpdateCount, error: null })),
     })),
   }));
 
-  // Track how many times proposal_record has been called to alternate between
-  // the update chain and the count chain.
+  // Derive eligible proposal rows from staging rows (deduplicated by source_proposal_id).
+  // Each row is marked approved_for_publication in the surface lane so the governance check passes.
+  const seen = new Set<string>();
+  const eligibilityProposals = stagingRows
+    .filter((r) => r.source_proposal_id)
+    .reduce<{ proposal_record_id: string; proposal_state: string; lane_type: string }[]>((acc, r) => {
+      const id = r.source_proposal_id as string;
+      if (!seen.has(id)) {
+        seen.add(id);
+        acc.push({ proposal_record_id: id, proposal_state: "approved_for_publication", lane_type: "surface" });
+      }
+      return acc;
+    }, []);
+
+  // Track proposal_record call sequence: 1=eligibility select, 2=update, 3=count select.
   let proposalCallCount = 0;
 
   const mockPublicUpsert = vi.fn(() => Promise.resolve({ error: publicUpsertError }));
@@ -277,6 +294,16 @@ function buildPromoteMock({
       single: vi.fn(() => Promise.resolve({ data: { id: promotionId }, error: promotionInsertError })),
     })),
   }));
+
+  // Fluent chain for getActiveIdentityId: returns null so the snapshot lineage block is skipped.
+  function buildIdentityChain(): Record<string, unknown> {
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = vi.fn(() => chain);
+    chain.limit = vi.fn(() => chain);
+    chain.maybeSingle = vi.fn(() => Promise.resolve({ data: null }));
+    return chain;
+  }
 
   const supabase = {
     from: vi.fn((table: string) => {
@@ -288,12 +315,28 @@ function buildPromoteMock({
       if (table === "public_habitat_content") {
         return { upsert: mockPublicUpsert };
       }
+      if (table === "identity") {
+        // getActiveIdentityId query; returns null so snapshot lineage block is skipped.
+        return buildIdentityChain();
+      }
       if (table === "proposal_record") {
         proposalCallCount += 1;
-        // First call is the update; second call is the count query.
-        return proposalCallCount === 1
-          ? { update: mockProposalUpdate }
-          : { select: mockProposalSelect };
+        if (proposalCallCount === 1) {
+          // Eligibility select: .select("...").in([sourceIds]).in([states]) → eligible proposals
+          return {
+            select: vi.fn(() => ({
+              in: vi.fn(() => ({
+                in: vi.fn(() => Promise.resolve({ data: eligibilityProposals, error: null })),
+              })),
+            })),
+          };
+        } else if (proposalCallCount === 2) {
+          // Update: .update({...}).in([eligibleIds]) → { error }
+          return { update: mockProposalUpdate };
+        } else {
+          // Count select: .select(..., {count}).in([ids]).eq("proposal_state","published")
+          return { select: mockProposalSelect };
+        }
       }
       if (table === "habitat_promotion_record") {
         return { insert: mockPromoInsert };
