@@ -107,6 +107,8 @@ function buildIntentUpdateInput(state: SessionExecutionState): IntentUpdateInput
     recurrenceUpdated: state.recurrenceUpdated,
     returnSuccessTrend: state.synthesisPressure?.components?.return_success_trend,
     repetitionPenalty: state.synthesisPressure?.components?.repetition_without_movement_penalty,
+    // Feed-forward from trajectory review: recommended action for the next session's intent.
+    recommendedNextActionKind: state.trajectoryReviewRecommendedAction ?? null,
   };
 }
 import {
@@ -290,6 +292,13 @@ interface SessionExecutionState {
     actor_authority: "runner" | "human" | "reviewer" | "unknown";
     reason_codes: string[];
   } | null;
+  /**
+   * Feed-forward from trajectory review: recommended next action kind from the current session's
+   * trajectory review row. Read by buildIntentUpdateInput and forwarded to updateSessionIntent
+   * so the next-session intent can be seeded with the review's recommendation.
+   * Set by persistTrajectoryReview; null when no recommendation was produced.
+   */
+  trajectoryReviewRecommendedAction?: string | null;
 }
 
 /**
@@ -515,7 +524,7 @@ function selectModeAndDrive(state: SessionExecutionState): SessionExecutionState
       };
     }
   }
-  // One bounded trajectory signal: repetition advisory → small reflection_need nudge (mode bias only when confidence sufficient).
+  // Stage-2 trajectory signal A: repetition advisory → small reflection_need nudge (gated on sufficient confidence).
   const TRAJECTORY_REFLECTION_NUDGE = 0.06;
   const adv = state.trajectoryAdvisory;
   if (adv?.feedback.gently_reduce_repetition && adv.interpretation_confidence !== "low") {
@@ -535,6 +544,38 @@ function selectModeAndDrive(state: SessionExecutionState): SessionExecutionState
     console.log("[session] trajectory_advisory skipped (low confidence)", {
       source: "trajectory_feedback",
       signal: "gently_reduce_repetition",
+      applied: false,
+      reason: "interpretation_confidence is low; neutral fallback",
+    });
+  }
+  // Stage-2 trajectory signal B: consolidation advisory → small recent_exploration_rate reduction.
+  // Fires when trajectory shows exploration-heavy posture with a large proposal backlog or
+  // consolidating posture in a clustered window. Bounded nudge; never a hard override.
+  const TRAJECTORY_CONSOLIDATION_NUDGE_LIGHT = 0.05;
+  const TRAJECTORY_CONSOLIDATION_NUDGE_STRONG = 0.10;
+  const consolidationSignal = adv?.feedback.favor_consolidation;
+  if (consolidationSignal && consolidationSignal !== "none" && adv?.interpretation_confidence !== "low") {
+    const nudge =
+      consolidationSignal === "strong"
+        ? TRAJECTORY_CONSOLIDATION_NUDGE_STRONG
+        : TRAJECTORY_CONSOLIDATION_NUDGE_LIGHT;
+    sessionState = {
+      ...sessionState,
+      recent_exploration_rate: Math.max(0, sessionState.recent_exploration_rate - nudge),
+    };
+    console.log("[session] trajectory_advisory applied", {
+      source: "trajectory_feedback",
+      signal: "favor_consolidation",
+      applied: true,
+      favor_consolidation: consolidationSignal,
+      effect: `recent_exploration_rate -${nudge}`,
+      confidence: adv.interpretation_confidence,
+      reason: adv.feedback.reason,
+    });
+  } else if (consolidationSignal && consolidationSignal !== "none") {
+    console.log("[session] trajectory_advisory skipped (low confidence)", {
+      source: "trajectory_feedback",
+      signal: "favor_consolidation",
       applied: false,
       reason: "interpretation_confidence is low; neutral fallback",
     });
@@ -2726,6 +2767,8 @@ async function persistTrajectoryReview(
     console.warn("[session]", msg, { session_id: result.session.session_id });
     return { ...state, warnings: [...state.warnings, msg] };
   }
-  return state;
+  // Feed-forward: store the recommended_next_action_kind in state so it can be passed to
+  // updateSessionIntent (which writes it to the next active intent's evidence_json).
+  return { ...state, trajectoryReviewRecommendedAction: row.recommended_next_action_kind ?? null };
 }
 

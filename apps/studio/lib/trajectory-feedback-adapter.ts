@@ -1,19 +1,25 @@
 /**
- * Trajectory feedback adapter — advisory signals with one Stage-2 active binding.
+ * Trajectory feedback adapter — advisory signals with two Stage-2 active bindings.
  *
- * Stage-1 contract (still in force for all other signals):
+ * Stage-1 contract (still in force for remaining advisory-only signals):
  *   `getTrajectoryFeedback` output MUST NOT be called directly from any selector:
  *   not mode, drive, focus, proposal eligibility, proposal pressure, or selection source.
  *
- * Stage-2 active binding (one bounded signal only):
- *   The `gently_reduce_repetition` signal from this adapter is pre-computed in
- *   `loadCreativeStateAndBacklog` and stored as `state.trajectoryAdvisory`. It is then
- *   read in `selectModeAndDrive` as a small +0.06 nudge to `reflection_need` — a bounded
- *   delta on an existing selector, never a branch replacement. This binding is logged
- *   explicitly and recorded in the deliberation trace (`hypotheses_json`).
+ * Stage-2 active bindings (two bounded signals):
  *
- * All other signals (`favor_consolidation`, `proposal_pressure_adjustment`) remain
- * dry-run / observability-only. Their output MUST NOT reach any selector.
+ *   Binding A — `gently_reduce_repetition`:
+ *     Pre-computed in `loadCreativeStateAndBacklog` and stored as `state.trajectoryAdvisory`.
+ *     Read in `selectModeAndDrive` as a small +0.06 nudge to `reflection_need` — a bounded
+ *     delta on an existing selector, never a branch replacement. Logged and recorded in the
+ *     deliberation trace (`hypotheses_json`).
+ *
+ *   Binding B — `favor_consolidation`:
+ *     Read in `selectModeAndDrive` as a bounded reduction to `recent_exploration_rate`:
+ *     −0.05 for "light", −0.10 for "strong". Same gate as Binding A: only applied when
+ *     `interpretation_confidence !== "low"`. Logged explicitly.
+ *
+ * All other signals (`proposal_pressure_adjustment`) remain dry-run / observability-only.
+ * Their output MUST NOT reach any selector.
  *
  * Safe insertion point for remaining dry-run signals:
  *   Call `buildAdvisoryLog` after a session completes (e.g. in runtime-state-api for
@@ -29,6 +35,7 @@
  *
  * Where advisory output goes:
  *   - `gently_reduce_repetition` → state.trajectoryAdvisory → reflection_need nudge in selectModeAndDrive
+ *   - `favor_consolidation` → state.trajectoryAdvisory → recent_exploration_rate nudge in selectModeAndDrive
  *   - deliberation trace `hypotheses_json.trajectory_advisory_applied`
  *   - runtime-state-api `deriveTrajectoryAdvisoryDryRun` for debug panel (other signals)
  *   - NOT in selection_evidence, NOT in selection_source logic
@@ -163,6 +170,6 @@ export function buildAdvisoryLog(context: TrajectoryFeedbackContext): Trajectory
     feedback: getTrajectoryFeedback(context),
     context_snapshot: context,
     generated_at: new Date().toISOString(),
-    note: "Trajectory advisory adapter. gently_reduce_repetition is Stage-2 active (wired via state.trajectoryAdvisory → reflection_need nudge). Other signals are observability-only and do NOT influence selection paths.",
+    note: "Trajectory advisory adapter. gently_reduce_repetition and favor_consolidation are Stage-2 active (wired via state.trajectoryAdvisory → reflection_need / recent_exploration_rate nudges in selectModeAndDrive). Other signals are observability-only and do NOT influence selection paths.",
   };
 }

@@ -74,6 +74,13 @@ export interface IntentUpdateInput {
   returnSuccessTrend?: number;
   /** From synthesis pressure: repetition_without_movement_penalty (0–1). */
   repetitionPenalty?: number;
+  /**
+   * Feed-forward from trajectory review: recommended next action kind.
+   * When present, biases the new intent kind toward the review's recommendation.
+   * Example: "resurface_archive" → intent_kind "return"; "generate_habitat_candidate" → "consolidate".
+   * Advisory only — session mode takes precedence when no clear mapping exists.
+   */
+  recommendedNextActionKind?: string | null;
 }
 
 export type IntentOutcome = "continue" | "fulfill" | "abandon" | "supersede" | "create";
@@ -122,8 +129,20 @@ export function deriveIntentOutcome(
   return "continue";
 }
 
-/** Map session mode to intent_kind for new intents. */
-export function intentKindFromSessionMode(mode: string): IntentKind {
+/** Map session mode (and optional trajectory review recommendation) to intent_kind for new intents.
+ *
+ * When `recommendedNextActionKind` is provided and has a clear mapping, it overrides
+ * session mode (it represents the trajectory review's feed-forward signal for the next session).
+ * If there is no clear mapping, session mode determines the intent kind.
+ */
+export function intentKindFromSessionMode(
+  mode: string,
+  recommendedNextActionKind?: string | null
+): IntentKind {
+  // Feed-forward from trajectory review: recommended next action overrides session mode when mapped.
+  if (recommendedNextActionKind === "resurface_archive") return "return";
+  if (recommendedNextActionKind === "generate_habitat_candidate") return "consolidate";
+
   switch (mode) {
     case "reflect":
       return "reflect";
@@ -176,7 +195,7 @@ export async function updateSessionIntent(
     }
 
     if (outcome === "create" || outcome === "fulfill" || outcome === "abandon" || outcome === "supersede") {
-      const intent_kind = intentKindFromSessionMode(input.sessionMode);
+      const intent_kind = intentKindFromSessionMode(input.sessionMode, input.recommendedNextActionKind);
       const row = {
         status: "active" as const,
         intent_kind,
@@ -189,6 +208,8 @@ export async function updateSessionIntent(
           repetition_detected: input.repetitionDetected,
           proposal_created: input.proposalCreated,
           recurrence_updated: input.recurrenceUpdated,
+          // Feed-forward from trajectory review (null when no recommendation was produced).
+          recommended_next_action_kind: input.recommendedNextActionKind ?? null,
         } as Record<string, unknown>,
         confidence: input.confidence,
         exit_conditions_json: null as Record<string, unknown> | null,
