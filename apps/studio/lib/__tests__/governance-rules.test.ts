@@ -124,7 +124,7 @@ describe("isLegalProposalStateTransition", () => {
 describe("getNextLegalProposalActions", () => {
   it("returns next states for pending_review", () => {
     expect(getNextLegalProposalActions("pending_review")).toEqual([
-      "needs_revision", "approved_for_staging", "archived", "rejected", "ignored",
+      "needs_revision", "approved_for_staging", "archived", "rejected", "ignored", "approved",
     ]);
   });
   it("returns next states for approved_for_staging", () => {
