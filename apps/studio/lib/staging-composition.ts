@@ -5,6 +5,11 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseHabitatPayloadForMerge, validateHabitatPayload } from "./habitat-payload";
+import {
+  canTransitionProposalState,
+  getProposalAuthority,
+  type LaneType,
+} from "./proposal-governance";
 
 /**
  * Proposal states from which a promotion-to-public may advance to 'published'.
@@ -137,24 +142,48 @@ export async function promoteStagingToPublic(
   ];
   let proposalsPublished = 0;
   if (sourceProposalIds.length > 0) {
-    const { error: updateErr } = await supabase
+    const { data: proposals, error: proposalsErr } = await supabase
       .from("proposal_record")
-      .update({ proposal_state: "published", updated_at: now })
+      .select("proposal_record_id, proposal_state, lane_type")
       .in("proposal_record_id", sourceProposalIds)
       .in("proposal_state", PROMOTABLE_PROPOSAL_STATES);
 
-    if (!updateErr) {
-      const { count, error: countErr } = await supabase
-        .from("proposal_record")
-        .select("proposal_record_id", { count: "exact", head: true })
-        .in("proposal_record_id", sourceProposalIds)
-        .eq("proposal_state", "published");
+    if (!proposalsErr && Array.isArray(proposals) && proposals.length > 0) {
+      const authority = getProposalAuthority("http_user");
+      const eligibleIds = proposals
+        .filter((p) => {
+          const lane = ((p.lane_type as string | null) ?? "surface") as LaneType;
+          const check = canTransitionProposalState({
+            current_state: p.proposal_state as string,
+            target_state: "published",
+            lane_type: lane,
+            actor_authority: authority,
+          });
+          return check.ok;
+        })
+        .map((p) => p.proposal_record_id as string)
+        .filter((id): id is string => !!id);
 
-      if (!countErr) {
-        proposalsPublished = count ?? 0;
+      if (eligibleIds.length > 0) {
+        const { error: updateErr } = await supabase
+          .from("proposal_record")
+          .update({ proposal_state: "published", updated_at: now })
+          .in("proposal_record_id", eligibleIds);
+
+        if (!updateErr) {
+          const { count, error: countErr } = await supabase
+            .from("proposal_record")
+            .select("proposal_record_id", { count: "exact", head: true })
+            .in("proposal_record_id", eligibleIds)
+            .eq("proposal_state", "published");
+
+          if (!countErr) {
+            proposalsPublished = count ?? 0;
+          }
+        }
       }
+      // Non-fatal: if updating proposal states fails we still record the promotion.
     }
-    // Non-fatal: if updating proposal states fails we still record the promotion.
   }
 
   const { data: promo, error: insertErr } = await supabase

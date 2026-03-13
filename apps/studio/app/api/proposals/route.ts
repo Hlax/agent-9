@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { capSummaryTo200Words } from "@/lib/habitat-payload";
+import {
+  classifyProposalLane,
+  canCreateProposal,
+  getProposalAuthority,
+  type LaneType,
+} from "@/lib/proposal-governance";
 
 /**
  * GET /api/proposals — list proposals. Query: lane_type, target_type.
@@ -54,7 +60,7 @@ export async function POST(request: Request) {
     const supabase = getSupabaseServer();
     if (!supabase) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
     const body = await request.json().catch(() => ({}));
-    const lane_type = body?.lane_type ?? "surface";
+    const requestedLane = (body?.lane_type ?? null) as LaneType | null;
     const target_type = body?.target_type ?? "concept";
     const title = typeof body?.title === "string" ? body.title.trim() : "";
     const rawSummary = typeof body?.summary === "string" ? body.summary : null;
@@ -67,8 +73,30 @@ export async function POST(request: Request) {
     const preview_uri = body?.preview_uri ?? null;
     const created_by = body?.created_by ?? (user?.email ?? "harvey");
     if (!title) return NextResponse.json({ error: "title is required" }, { status: 400 });
+
+    // Governance V1: classify lane and enforce create authority for human callers.
+    const classification = classifyProposalLane({
+      requested_lane: requestedLane ?? undefined,
+      proposal_role,
+      target_surface,
+      target_type,
+    });
+    const authority = getProposalAuthority("http_user");
+    const createCheck = canCreateProposal(classification.lane_type, authority);
+    if (!createCheck.ok) {
+      return NextResponse.json(
+        {
+          error: "Proposal creation blocked by governance.",
+          reason_codes: createCheck.reason_codes,
+          lane_type: classification.lane_type,
+          classification_reason: classification.classification_reason,
+        },
+        { status: 400 }
+      );
+    }
+
     const row: Record<string, unknown> = {
-      lane_type,
+      lane_type: classification.lane_type,
       target_type,
       target_id,
       title,
@@ -84,9 +112,18 @@ export async function POST(request: Request) {
     if (target_surface != null) row.target_surface = target_surface;
     if (proposal_type != null) row.proposal_type = proposal_type;
     if (proposal_role != null) row.proposal_role = proposal_role;
-    const { data, error } = await supabase.from("proposal_record").insert(row).select("proposal_record_id").single();
+    const { data, error } = await supabase
+      .from("proposal_record")
+      .insert(row)
+      .select("proposal_record_id")
+      .single();
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json({ proposal_record_id: data?.proposal_record_id, ...row });
+    return NextResponse.json({
+      proposal_record_id: data?.proposal_record_id,
+      ...row,
+      lane_type: classification.lane_type,
+      classification_reason: classification.classification_reason,
+    });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
   }

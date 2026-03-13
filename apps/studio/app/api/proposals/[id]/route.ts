@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { isValidProposalTransition } from "@/lib/proposal-transitions";
+import {
+  canTransitionProposalState,
+  getProposalAuthority,
+  type LaneType,
+} from "@/lib/proposal-governance";
 
 const ALLOWED_PROPOSAL_STATES = [
   "archived",
@@ -13,9 +18,6 @@ const ALLOWED_PROPOSAL_STATES = [
   "approved_for_publication",
   "published",
 ] as const;
-
-/** States that only surface proposals may enter; medium/system must use approve route (which enforces lane). */
-const SURFACE_ONLY_STATES = ["approved_for_staging", "approved_for_publication", "published"] as const;
 
 /**
  * PATCH /api/proposals/[id] — update proposal state.
@@ -48,22 +50,19 @@ export async function PATCH(
       .single();
     if (fetchErr || !existing) return NextResponse.json({ error: "Proposal not found" }, { status: 404 });
 
-    if (!isValidProposalTransition(existing.proposal_state, proposal_state)) {
-      return NextResponse.json(
-        { error: `Cannot transition proposal from '${existing.proposal_state}' to '${proposal_state}'.` },
-        { status: 400 }
-      );
-    }
-
-    const lane = (existing.lane_type ?? "surface") as string;
-    if (
-      (SURFACE_ONLY_STATES as readonly string[]).includes(proposal_state) &&
-      lane !== "surface"
-    ) {
+    const lane = ((existing.lane_type as string | null) ?? "surface") as LaneType;
+    const authority = getProposalAuthority("http_user");
+    const transition = canTransitionProposalState({
+      current_state: existing.proposal_state as string,
+      target_state: proposal_state,
+      lane_type: lane,
+      actor_authority: authority,
+    });
+    if (!transition.ok) {
       return NextResponse.json(
         {
-          error:
-            "Only surface proposals may be moved to approved_for_staging, approved_for_publication, or published. Use POST /api/proposals/[id]/approve for the governed path.",
+          error: `Cannot transition proposal from '${existing.proposal_state}' to '${proposal_state}'.`,
+          reason_codes: transition.reason_codes,
         },
         { status: 400 }
       );

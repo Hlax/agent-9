@@ -4,6 +4,11 @@ import { getSupabaseServer } from "@/lib/supabase-server";
 import { getBrainContext, buildChatContextWithBudget } from "@/lib/brain-context";
 import { computeIdentityStabilityScore } from "@/lib/identity-signal";
 import { evaluateNamingReadiness } from "@/lib/naming-readiness";
+import {
+  classifyProposalLane,
+  canCreateProposal,
+  getProposalAuthority,
+} from "@/lib/proposal-governance";
 
 const SYSTEM_PROMPT = `You are the Twin: a creative agent. Harvey is your operator.
 
@@ -267,24 +272,35 @@ export async function POST(request: Request) {
         let proposalCreated = false;
         const nameProposalRe = /\n\s*\[NAME_PROPOSAL:([^|]+)\|([^\]]*)\]\s*$/;
         const nameProposalMatch = replyContent.match(nameProposalRe);
-        if (nameProposalMatch && nameProposalMatch[1] != null) {
+          if (nameProposalMatch && nameProposalMatch[1] != null) {
           const proposedName = nameProposalMatch[1].trim();
           const rationale = (nameProposalMatch[2] ?? "").trim() || null;
           replyContent = replyContent.replace(nameProposalRe, "").trim();
-          await supabase.from("proposal_record").insert({
-            lane_type: "surface",
+
+          const classification = classifyProposalLane({
+            requested_lane: "surface",
+            proposal_role: "identity_name",
+            target_surface: "identity",
             target_type: "identity_name",
-            target_id: null,
-            title: proposedName,
-            summary: rationale,
-            proposal_state: "pending_review",
-            preview_uri: null,
-            review_note: null,
-            created_by: user?.email ?? "harvey",
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
           });
-          proposalCreated = true;
+          const authority = getProposalAuthority("http_user");
+          const createCheck = canCreateProposal(classification.lane_type, authority);
+          if (createCheck.ok) {
+            await supabase.from("proposal_record").insert({
+              lane_type: classification.lane_type,
+              target_type: "identity_name",
+              target_id: null,
+              title: proposedName,
+              summary: rationale,
+              proposal_state: "pending_review",
+              preview_uri: null,
+              review_note: null,
+              created_by: user?.email ?? "harvey",
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+            proposalCreated = true;
+          }
         }
         twinMsgId = crypto.randomUUID();
         await supabase.from("chat_message").insert({

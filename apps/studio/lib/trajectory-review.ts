@@ -77,6 +77,7 @@ export interface TrajectoryReviewRow {
   issues_json: { items: string[] } | null;
   strengths_json: { items: string[] } | null;
   learning_signal: string | null;
+  /** Reserved: persisted for analytics/future use. Not consumed by any selector (Trajectory Feedback V1 audit). Do not assume control-active. */
   recommended_next_action_kind: string | null;
 }
 
@@ -267,6 +268,7 @@ export function deriveTrajectoryReview(
     issues_json: issues.length > 0 ? { items: issues } : null,
     strengths_json: strengths.length > 0 ? { items: strengths } : null,
     learning_signal: learningSignal(input, outcomeKind),
+    // Reserved: not yet read by mode/focus/proposal logic (Trajectory Feedback V1).
     recommended_next_action_kind: recommendedNextActionKind(input, outcomeKind),
   };
 }

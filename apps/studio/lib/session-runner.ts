@@ -49,7 +49,13 @@ import {
 } from "@/lib/stop-limits";
 import { detectRepetition } from "@/lib/repetition-detection";
 import * as runtimeConfigModule from "@/lib/runtime-config";
-import { isLegalProposalStateTransition } from "@/lib/governance-rules";
+import {
+  classifyProposalLane,
+  canCreateProposal,
+  canTransitionProposalState,
+  evaluateGovernanceGate,
+  getProposalAuthority,
+} from "@/lib/proposal-governance";
 import { writeDeliberationTrace } from "./deliberation-trace";
 import { deriveTrajectoryReview } from "./trajectory-review";
 import {
@@ -274,6 +280,13 @@ interface SessionExecutionState {
   trajectoryAdvisory?: {
     feedback: TrajectoryFeedbackResult;
     interpretation_confidence: "low" | "medium" | "high";
+  } | null;
+  /** Governance evidence for this session's proposal decision (when applicable). */
+  governanceEvidence?: {
+    lane_type: "surface" | "medium" | "system";
+    classification_reason: string;
+    actor_authority: "runner" | "human" | "reviewer" | "unknown";
+    reason_codes: string[];
   } | null;
 }
 
@@ -1644,25 +1657,92 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
   const critique = state.critique;
   if (!supabase || !artifact || !evaluation || !critique) return state;
 
-  // Step 4 (loop closure): gate weak proposals — do not create/update when confidence is defaulted or below threshold.
   const confidence = state.decisionSummary.confidence;
-  if (
-    state.confidence_truth === "defaulted" ||
-    (typeof confidence === "number" && confidence < PROPOSAL_CONFIDENCE_MIN)
-  ) {
-    const reason =
-      state.confidence_truth === "defaulted"
-        ? "Proposal skipped: confidence was defaulted (no evaluation)."
-        : `Proposal skipped: confidence ${confidence.toFixed(2)} is below threshold ${PROPOSAL_CONFIDENCE_MIN}.`;
-    return {
-      ...state,
-      decisionSummary: { ...state.decisionSummary, next_action: state.decisionSummary.next_action ?? reason },
+  let {
+    proposalCreated,
+    traceProposalId,
+    traceProposalType,
+    decisionSummary,
+    warnings,
+    proposalOutcome,
+    governanceEvidence,
+  } = state;
+
+  if (artifact.medium === "concept") {
+    // Governance V1: classify lane/role for habitat layout proposals and
+    // enforce runner authority + confidence/evidence gates before creation.
+    const laneInfo = classifyProposalLane({
+      requested_lane: "surface",
+      proposal_role: "habitat_layout",
+      target_surface: "staging_habitat",
+      target_type: "concept",
+    });
+    const authority = getProposalAuthority("runner");
+    const createCheck = canCreateProposal(laneInfo.lane_type, authority);
+    if (!createCheck.ok) {
+      const reason =
+        "Proposal skipped by governance: runner is not allowed to create system-level proposals from concept artifacts.";
+      const updatedWarnings = [
+        ...warnings,
+        `${reason} codes=${createCheck.reason_codes.join(",")}`,
+      ];
+      return {
+        ...state,
+        warnings: updatedWarnings,
+        proposalOutcome: proposalOutcome ?? "skipped_governance",
+        decisionSummary: {
+          ...decisionSummary,
+          next_action: decisionSummary.next_action ?? reason,
+        },
+      };
+    }
+
+    const hasMinimumEvidence =
+      state.confidence_truth === "inferred" &&
+      typeof confidence === "number" &&
+      confidence >= PROPOSAL_CONFIDENCE_MIN;
+    const gate = evaluateGovernanceGate({
+      lane_type: laneInfo.lane_type,
+      proposal_role: laneInfo.proposal_role ?? "habitat_layout",
+      current_state: null,
+      target_state: "pending_review",
+      actor_authority: authority,
+      confidence_truth: state.confidence_truth,
+      duplicate_signal: null,
+      has_minimum_evidence: hasMinimumEvidence,
+    });
+    if (gate.decision === "block") {
+      const reason =
+        state.confidence_truth === "defaulted"
+          ? "Proposal skipped: confidence was defaulted and governance gate blocked creation."
+          : `Proposal skipped: governance gate reported insufficient evidence for creating a habitat layout proposal (codes=${gate.reason_codes.join(",")}).`;
+      const updatedWarnings = [
+        ...warnings,
+        `${reason}`,
+      ];
+      return {
+        ...state,
+        warnings: updatedWarnings,
+        proposalOutcome: proposalOutcome ?? "skipped_governance",
+        decisionSummary: {
+          ...decisionSummary,
+          next_action: decisionSummary.next_action ?? reason,
+        },
+      };
+    }
+    if (gate.decision === "warn") {
+      warnings = [
+        ...warnings,
+        `Governance gate warning for habitat_layout proposal creation (codes=${gate.reason_codes.join(",")}).`,
+      ];
+    }
+    governanceEvidence = {
+      lane_type: laneInfo.lane_type,
+      classification_reason: laneInfo.classification_reason,
+      actor_authority: authority,
+      reason_codes: gate.reason_codes,
     };
-  }
 
-  let { proposalCreated, traceProposalId, traceProposalType, decisionSummary, warnings, proposalOutcome } = state;
-
-    if (artifact.medium === "concept") {
     const eligibility = isProposalEligible({
       medium: artifact.medium,
       alignment_score: evaluation.alignment_score,
@@ -1763,7 +1843,12 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
               // is a legal FSM transition are updated. This uses the canonical guard to
               // keep the archival path consistent with human-driven governance transitions.
               const legalToArchive = older.filter((o) =>
-                isLegalProposalStateTransition(o.proposal_state as string, "archived")
+                canTransitionProposalState({
+                  current_state: o.proposal_state as string,
+                  target_state: "archived",
+                  lane_type: "surface",
+                  actor_authority: authority,
+                }).ok
               );
               if (legalToArchive.length > 0) {
                 const { error: archiveOlderError } = await supabase
@@ -1899,6 +1984,78 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
 
   // Phase 3: extension proposal — creation-only; no apply in runner. Medium lane: resolves to roadmap/spec, not staging/public.
   if (isExtensionProposalEligible(state)) {
+    const authority = getProposalAuthority("runner");
+    const laneInfo = classifyProposalLane({
+      requested_lane: "medium",
+      proposal_role: state.extension_classification,
+      target_surface: null,
+      target_type: "extension",
+    });
+    const createCheck = canCreateProposal(laneInfo.lane_type, authority);
+    if (!createCheck.ok) {
+      const reason =
+        "Extension proposal skipped by governance: runner is not allowed to create system-level proposals.";
+      warnings = [
+        ...warnings,
+        `${reason} codes=${createCheck.reason_codes.join(",")}`,
+      ];
+      return {
+        ...state,
+        warnings,
+        proposalCreated,
+        traceProposalId,
+        traceProposalType,
+        proposalOutcome: proposalOutcome ?? "skipped_governance",
+        decisionSummary,
+      };
+    }
+
+    const hasMinimumEvidence =
+      state.confidence_truth === "inferred" &&
+      typeof confidence === "number" &&
+      confidence >= PROPOSAL_CONFIDENCE_MIN;
+    const gate = evaluateGovernanceGate({
+      lane_type: laneInfo.lane_type,
+      proposal_role: laneInfo.proposal_role ?? state.extension_classification ?? "extension",
+      current_state: null,
+      target_state: "pending_review",
+      actor_authority: authority,
+      confidence_truth: state.confidence_truth,
+      duplicate_signal: null,
+      has_minimum_evidence: hasMinimumEvidence,
+    });
+    if (gate.decision === "block") {
+      const reason =
+        state.confidence_truth === "defaulted"
+          ? "Extension proposal skipped: confidence was defaulted and governance gate blocked creation."
+          : `Extension proposal skipped: governance gate reported insufficient evidence (codes=${gate.reason_codes.join(",")}).`;
+      warnings = [...warnings, reason];
+      return {
+        ...state,
+        warnings,
+        proposalCreated,
+        traceProposalId,
+        traceProposalType,
+        proposalOutcome: proposalOutcome ?? "skipped_governance",
+        decisionSummary: {
+          ...decisionSummary,
+          next_action: decisionSummary.next_action ?? reason,
+        },
+      };
+    }
+    if (gate.decision === "warn") {
+      warnings = [
+        ...warnings,
+        `Governance gate warning for extension proposal creation (codes=${gate.reason_codes.join(",")}).`,
+      ];
+    }
+    governanceEvidence = {
+      lane_type: laneInfo.lane_type,
+      classification_reason: laneInfo.classification_reason,
+      actor_authority: authority,
+      reason_codes: gate.reason_codes,
+    };
+
     const extensionCap = getMaxPendingExtensionProposals();
     const EXTENSION_PROPOSAL_ROLES = [
       "medium_extension",
@@ -1992,6 +2149,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
     proposalOutcome: proposalOutcome ?? state.proposalOutcome,
     decisionSummary,
     warnings,
+    governanceEvidence,
   };
 }
 
@@ -2287,6 +2445,7 @@ async function writeTraceAndDeliberation(
     /** trace_kind distinguishes full (artifact-producing) from minimal traces in the ledger. */
     trace_kind: "full" as const,
     selection_evidence: buildSelectionEvidence(state),
+    governance_evidence: state.governanceEvidence ?? null,
   };
   const { error: traceUpdateError } = await persistSessionTrace(
     supabase,

@@ -3,6 +3,11 @@ import { createClient } from "@/lib/supabase/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { writeChangeRecord } from "@/lib/change-record";
 import { validateHabitatPayload } from "@/lib/habitat-payload";
+import {
+  canRollbackProposalState,
+  getProposalAuthority,
+  type LaneType,
+} from "@/lib/proposal-governance";
 
 /**
  * POST /api/proposals/[id]/unpublish — demote a habitat proposal from public and clear public_habitat_content.
@@ -57,12 +62,29 @@ export async function POST(
       })
       .eq("slug", slug);
 
-    const newState = archive ? "archived" : "approved_for_staging";
+    const targetState = archive ? "archived" : "approved_for_staging";
+    const lane = ((proposal.lane_type as string | null) ?? "surface") as LaneType;
+    const authority = getProposalAuthority("http_user");
+    const rollback = canRollbackProposalState({
+      current_state: proposal.proposal_state as string,
+      target_state: targetState,
+      lane_type: lane,
+      actor_authority: authority,
+    });
+    if (!rollback.ok) {
+      return NextResponse.json(
+        {
+          error: `Cannot rollback proposal from '${proposal.proposal_state}' to '${targetState}'.`,
+          reason_codes: rollback.reason_codes,
+        },
+        { status: 400 }
+      );
+    }
 
     await supabase
       .from("proposal_record")
       .update({
-        proposal_state: newState,
+        proposal_state: targetState,
         updated_at: new Date().toISOString(),
       })
       .eq("proposal_record_id", id);
@@ -79,7 +101,7 @@ export async function POST(
       approved_by: user?.email ?? "harvey",
     });
 
-    return NextResponse.json({ ok: true, proposal_record_id: id, state: newState, slug });
+    return NextResponse.json({ ok: true, proposal_record_id: id, state: targetState, slug });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Unpublish failed" },

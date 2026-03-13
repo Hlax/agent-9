@@ -411,6 +411,12 @@ export function mapSessionTraceRow(row: {
     // Phase 3: extension proposal diagnostics
     extension_classification: (t as Record<string, unknown>).extension_classification ?? null,
     confidence_truth: (t as Record<string, unknown>).confidence_truth ?? null,
+    // Evidence Ledger V1: proposal and governance evidence on read path
+    proposal_outcome:
+      typeof (t as Record<string, unknown>).proposal_outcome === "string"
+        ? ((t as Record<string, unknown>).proposal_outcome as string)
+        : null,
+    governance_evidence: parseGovernanceEvidence(t as Record<string, unknown>),
     created_at: row.created_at,
   };
 }
@@ -517,6 +523,30 @@ export interface SessionSelectionEvidenceDisplay {
   trace_kind: "full" | "minimal" | null;
 }
 
+/** Governance evidence for display (from trace.governance_evidence). Evidence Ledger V1: why a proposal was created or blocked. */
+export interface GovernanceEvidenceDisplay {
+  lane_type: "surface" | "medium" | "system";
+  classification_reason: string;
+  actor_authority: "runner" | "human" | "reviewer" | "unknown";
+  reason_codes: string[];
+}
+
+function parseGovernanceEvidence(t: Record<string, unknown>): GovernanceEvidenceDisplay | null {
+  const ge = t.governance_evidence as Record<string, unknown> | null | undefined;
+  if (!ge || typeof ge !== "object") return null;
+  const lane_type = ge.lane_type as string | undefined;
+  if (lane_type !== "surface" && lane_type !== "medium" && lane_type !== "system") return null;
+  const classification_reason = typeof ge.classification_reason === "string" ? ge.classification_reason : "";
+  const actor_authority = ge.actor_authority as string | undefined;
+  const auth = ["runner", "human", "reviewer", "unknown"].includes(actor_authority ?? "")
+    ? (actor_authority as GovernanceEvidenceDisplay["actor_authority"])
+    : "unknown";
+  const reason_codes = Array.isArray(ge.reason_codes)
+    ? (ge.reason_codes as unknown[]).filter((c): c is string => typeof c === "string")
+    : [];
+  return { lane_type, classification_reason, actor_authority: auth, reason_codes };
+}
+
 /** One row in the Session Continuity Timeline (observability only). */
 export interface SessionTimelineRow {
   session_id: string;
@@ -535,6 +565,10 @@ export interface SessionTimelineRow {
   has_artifact: boolean;
   /** Selection evidence ledger (v1 or v2) for runtime panel. */
   selection_evidence: SessionSelectionEvidenceDisplay | null;
+  /** Why a proposal was created, updated, or skipped this session (Evidence Ledger V1). */
+  proposal_outcome: string | null;
+  /** Governance evidence when proposal path ran: lane, classification, reason codes (Evidence Ledger V1). */
+  governance_evidence: GovernanceEvidenceDisplay | null;
   /** Derived: how this row's thread relates to the next (older) row. */
   thread_transition: ThreadTransition;
   /** Derived: length of consecutive same thread_id run including this row (0 if no thread). */
@@ -725,6 +759,10 @@ export async function getSessionContinuityTimeline(
           trace_kind: traceKind,
         }
       : null;
+    const proposal_outcome =
+      typeof t.proposal_outcome === "string" ? t.proposal_outcome : null;
+    const governance_evidence = parseGovernanceEvidence(t);
+
     return {
       session_id: row.session_id,
       created_at: row.created_at,
@@ -741,6 +779,8 @@ export async function getSessionContinuityTimeline(
       proposal_created: Boolean(t.proposal_id),
       has_artifact: Boolean(t.artifact_id),
       selection_evidence,
+      proposal_outcome,
+      governance_evidence,
     };
   });
   const rows = attachThreadTransitionAndStreak(rowsBase);

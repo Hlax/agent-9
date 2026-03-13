@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { validateHabitatPayload, summaryFromHabitatPayload, capSummaryTo200Words } from "@/lib/habitat-payload";
+import {
+  classifyProposalLane,
+  canCreateProposal,
+  getProposalAuthority,
+  type LaneType,
+} from "@/lib/proposal-governance";
 
 /**
  * POST /api/artifacts/[id]/create-proposal — create a surface/system proposal from this concept artifact (Harvey override).
@@ -33,7 +39,7 @@ export async function POST(
     }
 
     const body = await request.json().catch(() => ({}));
-    const lane_type = (body?.lane_type === "system" ? "system" : body?.lane_type === "medium" ? "medium" : "surface") as "surface" | "system" | "medium";
+    const requestedLane = (body?.lane_type ?? "surface") as LaneType;
     const target_surface = typeof body?.target_surface === "string" ? body.target_surface : "staging_habitat";
     const proposal_type = typeof body?.proposal_type === "string" ? body.proposal_type : "layout";
     const proposal_role =
@@ -41,14 +47,32 @@ export async function POST(
         ? body.proposal_role.trim()
         : "habitat_layout";
 
-    // Interactive user-facing habitat modules are always surface lane.
-    // Medium-lane interactive capabilities should use a different role (e.g. medium_extension).
-    const effectiveLane: "surface" | "system" | "medium" =
-      proposal_role === "interactive_module" ? "surface" : lane_type;
+    // Governance V1: canonical lane classification for artifact-derived proposals.
+    const classification = classifyProposalLane({
+      requested_lane: requestedLane,
+      proposal_role,
+      target_surface,
+      target_type: "concept",
+    });
+    const authority = getProposalAuthority("http_user");
+    const createCheck = canCreateProposal(classification.lane_type, authority);
+    if (!createCheck.ok) {
+      return NextResponse.json(
+        {
+          error: "Proposal creation blocked by governance.",
+          reason_codes: createCheck.reason_codes,
+          lane_type: classification.lane_type,
+          classification_reason: classification.classification_reason,
+        },
+        { status: 400 }
+      );
+    }
 
     let habitat_payload_json: object | null = null;
     let summary: string = capSummaryTo200Words(artifact.summary) || artifact.title || "Concept proposal";
-    const hasPayload = body?.habitat_payload != null && (target_surface === "public_habitat" || target_surface === "staging_habitat");
+    const hasPayload =
+      body?.habitat_payload != null &&
+      (target_surface === "public_habitat" || target_surface === "staging_habitat");
     if (hasPayload) {
       const result = validateHabitatPayload(body.habitat_payload);
       if (!result.success) {
@@ -59,7 +83,7 @@ export async function POST(
     }
 
     const row = {
-      lane_type: effectiveLane === "medium" ? "medium" : effectiveLane === "system" ? "system" : "surface",
+      lane_type: classification.lane_type,
       target_type: "concept",
       target_id: artifactId,
       artifact_id: artifactId,

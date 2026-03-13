@@ -134,4 +134,32 @@ describe("mapSessionTraceRow", () => {
     expect(result.confidence_truth).toBe(0.95);
     expect(result.created_at).toBe("2026-03-10T10:00:00.000Z");
   });
+
+  it("maps Evidence Ledger V1 fields: proposal_outcome and governance_evidence", () => {
+    const row = {
+      ...baseRow,
+      trace: {
+        proposal_outcome: "skipped_governance",
+        governance_evidence: {
+          lane_type: "system",
+          classification_reason: "runner_not_allowed_system",
+          actor_authority: "runner",
+          reason_codes: ["runner_cannot_create_system"],
+        },
+      },
+    };
+    const result = mapSessionTraceRow(row);
+    expect(result.proposal_outcome).toBe("skipped_governance");
+    expect(result.governance_evidence).not.toBeNull();
+    expect(result.governance_evidence?.lane_type).toBe("system");
+    expect(result.governance_evidence?.classification_reason).toBe("runner_not_allowed_system");
+    expect(result.governance_evidence?.actor_authority).toBe("runner");
+    expect(result.governance_evidence?.reason_codes).toEqual(["runner_cannot_create_system"]);
+  });
+
+  it("returns null for proposal_outcome and governance_evidence when trace has none", () => {
+    const result = mapSessionTraceRow(baseRow);
+    expect(result.proposal_outcome).toBeNull();
+    expect(result.governance_evidence).toBeNull();
+  });
 });

@@ -3,8 +3,12 @@ import { createClient } from "@/lib/supabase/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import { writeChangeRecord } from "@/lib/change-record";
 import { validateHabitatPayload, collectArtifactIdsFromPayload } from "@/lib/habitat-payload";
-import { isLegalProposalStateTransition } from "@/lib/governance-rules";
 import { mergeHabitatProposalIntoStaging } from "@/lib/staging-composition";
+import {
+  canTransitionProposalState,
+  getProposalAuthority,
+  type LaneType,
+} from "@/lib/proposal-governance";
 
 /**
  * POST /api/proposals/[id]/approve — approve a proposal and apply it.
@@ -58,27 +62,27 @@ export async function POST(
       newState = "approved";
     }
 
-    if (!isLegalProposalStateTransition(proposal.proposal_state, newState)) {
+    const lane = ((proposal.lane_type as string | null) ?? "surface") as LaneType;
+    const authority = getProposalAuthority("http_user");
+    const transition = canTransitionProposalState({
+      current_state: proposal.proposal_state as string,
+      target_state: newState,
+      lane_type: lane,
+      actor_authority: authority,
+    });
+    if (!transition.ok) {
+      const nonSurface =
+        transition.reason_codes.includes("NON_SURFACE_STAGING_FORBIDDEN") ||
+        transition.reason_codes.includes("NON_SURFACE_PUBLIC_PROMOTION_FORBIDDEN");
+      const baseError = nonSurface
+        ? "Only surface lane proposals can be approved for staging or publication. This proposal is in the " +
+          (lane === "medium" ? "medium" : "system") +
+          " lane and resolves via roadmap or governance review."
+        : `Cannot transition proposal from '${proposal.proposal_state}' to '${newState}'.`;
       return NextResponse.json(
         {
-          error: `Cannot transition proposal from '${proposal.proposal_state}' to '${newState}'.`,
-        },
-        { status: 400 }
-      );
-    }
-
-    // Only surface lane proposals can be approved for staging or publication.
-    // Medium (e.g. capability/extension) and system (governance/platform) proposals resolve elsewhere.
-    const lane = (proposal.lane_type ?? "surface") as string;
-    const isStagingOrPublishAction =
-      action === "approve_for_staging" || action === "approve_for_publication" || action === "approve_publication";
-    if (isStagingOrPublishAction && lane !== "surface") {
-      return NextResponse.json(
-        {
-          error:
-            "Only surface lane proposals can be approved for staging or publication. This proposal is in the " +
-            (lane === "medium" ? "medium" : "system") +
-            " lane and resolves via roadmap or governance review.",
+          error: baseError,
+          reason_codes: transition.reason_codes,
         },
         { status: 400 }
       );

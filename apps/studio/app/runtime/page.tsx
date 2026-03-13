@@ -515,6 +515,19 @@ export default async function RuntimeDebugPage() {
                       <div style={{ color: "#555" }}>
                         <strong>Signals used:</strong> {ev.signals_used.length > 0 ? ev.signals_used.join(", ") : "—"}
                       </div>
+                      {(s.proposal_outcome != null || s.governance_evidence != null) && (
+                        <div style={{ marginTop: "0.35rem", color: "#444", borderTop: "1px solid #eee", paddingTop: "0.35rem" }}>
+                          <strong>Proposal outcome:</strong> {s.proposal_outcome ?? "—"}
+                          {s.governance_evidence && (
+                            <span style={{ marginLeft: "0.5rem" }}>
+                              · <strong>Governance:</strong> {s.governance_evidence.lane_type}
+                              {s.governance_evidence.reason_codes.length > 0 && (
+                                <> (codes: {s.governance_evidence.reason_codes.join(", ")})</>
+                              )}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -549,6 +562,7 @@ export default async function RuntimeDebugPage() {
                       <th style={{ padding: "0.35rem 0.5rem", maxWidth: 120 }}>Thread</th>
                       <th style={{ padding: "0.35rem 0.5rem" }}>Conf</th>
                       <th style={{ padding: "0.35rem 0.5rem" }}>Outcome</th>
+                      <th style={{ padding: "0.35rem 0.5rem", maxWidth: 140 }}>Proposal</th>
                       <th style={{ padding: "0.35rem 0.5rem" }}></th>
                     </tr>
                   </thead>
@@ -640,6 +654,20 @@ export default async function RuntimeDebugPage() {
                                 }}
                               >
                                 {s.outcome_kind}
+                              </span>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          <td style={{ padding: "0.35rem 0.5rem", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis" }} title={s.proposal_outcome ?? undefined}>
+                            {s.proposal_outcome ? (
+                              <span
+                                style={{
+                                  fontSize: "0.7rem",
+                                  color: s.proposal_outcome === "created" || s.proposal_outcome === "updated" ? "#282" : "#666",
+                                }}
+                              >
+                                {s.proposal_outcome}
                               </span>
                             ) : (
                               "—"
