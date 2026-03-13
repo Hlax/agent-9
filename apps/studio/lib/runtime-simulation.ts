@@ -444,7 +444,7 @@ export function simulateSessionDecision(inputs: SimulationInputs): SimulationRes
         milestoneArtifact: inputs.habitatContext.milestoneArtifact ?? null,
         previousFocus: inputs.habitatContext.previousFocus,
         currentFocus: inputs.habitatContext.currentFocus,
-        decisionConfidence,
+        decisionConfidence: decisionConfidence ?? null,
       })
     : [];
   const habitat_proposals = toLabHabitatProposalV1List(habitatProposalsRich);
