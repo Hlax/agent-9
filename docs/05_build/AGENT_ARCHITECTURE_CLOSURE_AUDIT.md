@@ -63,13 +63,13 @@
 | **Artifact** | persistCoreOutputs; persistSessionAndReflectionArtifact (reflection_note). | Style/backlog; archive path. | Yes. |
 | **Critique** | persistCoreOutputs. | selectFocus return path (hasCritiqueByArtifactId). | Yes. |
 | **Evaluation** | persistCoreOutputs; artifact score update. | Via updateCreativeState → snapshot. | Yes. |
-| **Trajectory review** | persistTrajectoryReview (artifact and no-artifact when pipelineResult). | getSynthesisPressure; getTasteBiasMap. Synthesis → trajectory text in buildContexts; taste → return selection. | **Yes for synthesis/taste.** **No for mode/drive:** trajectory_review is not read into loadCreativeStateAndBacklog or computeSessionMode/computeDriveWeights (per architecture audit D.2). |
+| **Trajectory review** | persistTrajectoryReview (artifact and no-artifact when pipelineResult). | getSynthesisPressure; getTasteBiasMap. Synthesis → trajectory text in buildContexts; taste → return selection. trajectory_feedback_adapter → state.trajectoryAdvisory → reflection_need nudge in selectModeAndDrive (one bounded Stage-2 signal; `gently_reduce_repetition` only). | **Yes** (synthesis/taste + one bounded advisory signal). |
 | **Proposal** | manageProposals. | computePublicCurationBacklog; getRuntimeStatePayload; manageProposals. | Yes. |
-| **Creative state snapshot** | persistDerivedState only (when artifact + critique + evaluation). | getLatestCreativeState → previousState → computeSessionMode, computeDriveWeights, selectDrive. | **Partial:** Not written on no-artifact or reflection-only path. Next session’s “latest state” can be stale for those runs. |
-| **Archive, recurrence, deliberation** | persistDerivedState; writeTraceAndDeliberation. | selectFocus; selectProjectAndThread; persistTrajectoryReview (deliberation_trace_id). | Yes. |
+| **Creative state snapshot** | persistDerivedState (artifact path) + no-artifact branch after persistTrajectoryReview (neutral eval + session signals). | getLatestCreativeState → previousState → computeSessionMode, computeDriveWeights, selectDrive. | **Yes** (closed on both paths). |
+| **Archive, recurrence, deliberation** | persistDerivedState; writeTraceAndDeliberation. | selectFocus; selectProjectAndThread (recurrence_score and creative_pull weighted; continuity_trace log surfaces actual values); persistTrajectoryReview (deliberation_trace_id). | Yes. |
 | **Memory record** | persistDerivedState. | Not used for control flow. | Observability only. |
 
-**Alignment:** Architecture audit B.2 states “creative_state_snapshot … Always when artifact exists” — consistent. It does not list the no-artifact snapshot gap as a blocker; this audit retains it as a closure gap. Architecture audit D.2 explicitly states trajectory review has no feedback path into next-session decisions.
+**Alignment:** Creative state snapshot now written on both artifact and no-artifact paths. One trajectory-derived advisory signal (`gently_reduce_repetition`) is wired into mode selection via a bounded +0.06 reflection_need nudge and recorded in the deliberation trace (`hypotheses_json.trajectory_advisory_applied`). Recurrence loop confirmed closed: selectProjectAndThread reads recurrence_score/creative_pull for thread/idea weighting; persistDerivedState writes them back after each artifact session; continuity_trace log in selectFocus surfaces actual values for inspection.
 
 ---
 
@@ -88,69 +88,83 @@
 
 ## F. Architecture Closure Judgment (revised)
 
-**Verdict: CLOSE BUT MISSING LOOPS**
+**Verdict: CLOSED (pre-governance milestone)**
 
-**Why not fully CLOSED:**
+**All three closure loops are now wired:**
 
-1. **Creative state snapshot not on no-artifact path** (unchanged in code). No-artifact and reflection-only sessions do not write creative_state_snapshot; next session’s mode/drive can be stale.
-2. **Trajectory review not fed into mode/drive** (architecture audit D.2). trajectory_review is written and read for synthesis pressure (→ trajectory text in buildContexts) and taste (→ return selection). It is **not** read into loadCreativeStateAndBacklog or into computeSessionMode/computeDriveWeights. So “reviews influence future sessions” is true for synthesis/taste and for creative_state_snapshot when written; it is **not** true for trajectory-level trend signals (e.g. stall pattern, confidence trend) affecting mode/drive.
-3. **Drive is descriptive only** (canon). Per creative_metabolism.md, drive is computed and stored but not injected into generation. Architecture audit D.1: either inject or reclassify — canon has **reclassified** drive as descriptive/observability, so D.1 is resolved by documentation; no code loop to “close” for drive steering unless product later chooses injection.
+1. **Creative state snapshot on no-artifact path** — implemented. No-artifact and reflection-only sessions now write `creative_state_snapshot` (neutral eval + session-type signals, same canonical `stateToSnapshotRow` contract as artifact path). See §G.1.
+2. **Trajectory-derived advisory wired into mode/drive** — implemented. One bounded signal (`gently_reduce_repetition`) feeds a +0.06 reflection_need nudge in `selectModeAndDrive` via the pre-computed `state.trajectoryAdvisory` path (Stage-2 contract: small delta on existing selector, not branch replacement). Logged in console and recorded in deliberation trace. See §G.2.
+3. **Recurrence/continuity signals confirmed to affect project-thread selection** — verified. `selectProjectAndThread` weights threads and ideas by `recurrence_score * 0.6 + creative_pull * 0.4`; `persistDerivedState` writes these back after each artifact session. `continuity_trace` log in `selectFocus` now surfaces the actual values for inspection. See §G.3.
 
-**Why not STILL OPEN:**
+**Drive is descriptive only** (canon). Per creative_metabolism.md, drive is computed and stored but not injected into generation. D.1 resolved by documentation.
 
-- System lane is **closed by canon** (human-only; runner never creates system proposals).
-- Staging, proposal FSM, recurrence, archive, critique, and observability loops are wired and documented.
-- Remaining gaps are (a) no-artifact snapshot, (b) trajectory → mode/drive feedback — both are well-defined, small fixes.
+**Why CLOSED:**
 
+- System lane closed by canon (human-only; runner never creates system proposals).
+- Staging, proposal FSM, archive, critique, and observability loops wired.
+- No-artifact snapshot loop closed (Task 1).
+- Trajectory advisory loop closed with one bounded Stage-2 signal (Task 2).
+- Recurrence/continuity loop verified and instrumented (Task 3).
 ---
 
 ## G. Critical Architecture Gaps (revised)
 
-1. **Creative state snapshot not persisted on no-artifact path**  
-   - **What:** persistDerivedState (and thus creative_state_snapshot insert) runs only when primaryArtifact + critique + evaluation exist. No-artifact and reflection-only sessions do not write a snapshot.  
-   - **Impact:** Next session’s getLatestCreativeState may be from an older artifact run.  
-   - **Fix:** Write a snapshot on the no-artifact branch (e.g. previousState + minimal session signals, no evaluation), or document that state advances only on artifact runs.
+### G.1 Creative state snapshot on no-artifact path — CLOSED
 
-2. **Trajectory review has no feedback into mode/drive**  
-   - **What:** trajectory_review is persisted and read for synthesis pressure and taste bias; it is not read when computing session mode or drive weights.  
-   - **Impact:** Trajectory-level trends (stall, confidence collapse, action-kind monoculture) do not influence next session’s mode or drive.  
-   - **Fix:** Feed at least one trajectory-derived signal (e.g. stall_count from last N trajectory_review rows) into loadCreativeStateAndBacklog or into computeSessionMode/computeDriveWeights (per architecture audit Step 3).
+- **What:** No-artifact and reflection-only sessions now write `creative_state_snapshot` using the same canonical contract as artifact sessions: `updateCreativeState(previousState, neutralEval, { isReflection, repetitionDetected })` + `stateToSnapshotRow` + DB insert. Runs after `persistTrajectoryReview` in the no-artifact branch of `runSessionInternal`.
+- **Files:** `apps/studio/lib/session-runner.ts` (no-artifact branch, "Step 1 loop closure" comment).
+- **Observability:** `[session] no_artifact_state_snapshot_persisted` log with `session_id`, `session_mode`, `snapshot_id`, `is_reflection`.
+- **Contract preserved:** Neutral evaluation (all scores 0.5, recurrence 0.2) minimizes state delta; `isReflection` signal still reduces `reflection_need` correctly; same `stateToSnapshotRow` helper.
 
-3. **Drive not a steering signal**  
-   - **Status:** Resolved **by canon** (creative_metabolism.md): drive is descriptive/observability only. No code change required for closure unless product later adds drive injection (architecture audit Step 2/4).
+### G.2 Trajectory advisory wired into mode/drive — CLOSED (one bounded Stage-2 signal)
 
-4. **System proposal lane**  
-   - **Status:** Resolved **by canon** (proposal_resolution_lanes_canon.md): system proposals human-initiated only; runner never creates lane_type = "system".
+- **What:** `gently_reduce_repetition` from `getTrajectoryFeedback` is pre-computed in `loadCreativeStateAndBacklog` (stored as `state.trajectoryAdvisory`) and applied in `selectModeAndDrive` as a +0.06 nudge to `reflection_need` when `interpretation_confidence !== "low"`. This is a small delta on an existing selector, never a branch replacement.
+- **Files:** `apps/studio/lib/session-runner.ts` (`selectModeAndDrive`), `apps/studio/lib/trajectory-feedback-adapter.ts` (updated comment).
+- **Observability:** `[session] trajectory_advisory applied` / `[session] trajectory_advisory skipped` console logs; `hypotheses_json.trajectory_advisory_applied` + `trajectory_advisory_reason` in deliberation trace.
+- **Stage-1 contract preserved:** `getTrajectoryFeedback` is not called from selection functions. Pre-computation happens in `loadCreativeStateAndBacklog` (state load phase). Other advisory signals (`favor_consolidation`, `proposal_pressure_adjustment`) remain dry-run only.
+
+### G.3 Recurrence/continuity signals affecting project-thread selection — VERIFIED + INSTRUMENTED
+
+- **What:** `selectProjectAndThread` weights threads by `recurrence_score * 0.6 + creative_pull * 0.4` (plus intent boost); same formula for ideas. `persistDerivedState` writes `evaluation.recurrence_score` back to `idea` and `idea_thread` after each artifact session. Loop is closed.
+- **Files:** `apps/studio/lib/project-thread-selection.ts` (read path + now returns recurrence trace values), `apps/studio/lib/session-runner.ts` (`persistDerivedState` writeback; `selectFocus` continuity_trace log).
+- **Observability:** `[session] selection: project_thread_idea` log now includes `continuity_trace` with actual `thread_recurrence_score`, `thread_creative_pull`, `idea_recurrence_score`, `idea_creative_pull` values.
+- **No change to selection logic:** Recurrence loop was already closed; these changes add inspectability only.
+
+### G.4 Drive not a steering signal — CLOSED BY CANON
+
+- **Status:** Resolved by creative_metabolism.md: drive is descriptive/observability only. No code change required.
+
+### G.5 System proposal lane — CLOSED BY CANON
+
+- **Status:** Resolved by proposal_resolution_lanes_canon.md: system proposals human-initiated only; runner never creates `lane_type = "system"`.
 
 ---
 
-## H. Recommended Implementation Order (reconciled)
+## H. Implementation Status (reconciled)
 
-Reconciles `docs/architecture/architecture_closure_audit.md` §F (Implementation Sequence) with the no-artifact snapshot gap.
+### Group 1 — Architecture closure (all done)
 
-### Group 1 — Architecture closure
+| # | Step | Status | Files |
+|---|------|--------|-------|
+| 1 | **Persist creative state snapshot on no-artifact path** | **Done** | session-runner.ts (no-artifact branch) |
+| 2 | **Formalize system proposal intent** | **Done (canon)** | proposal_resolution_lanes_canon.md |
+| 3 | **Trajectory feedback signal (one bounded Stage-2 advisory)** | **Done** | session-runner.ts (selectModeAndDrive), trajectory-feedback-adapter.ts |
+| 4 | **Verify project-thread-selection reads recurrence + instrument** | **Done** | project-thread-selection.ts, session-runner.ts (selectFocus log) |
 
-| # | Step | Purpose | Files | Label |
-|---|------|---------|--------|--------|
-| 1 | **Persist creative state snapshot on no-artifact path** | Close state loop for no-artifact/reflection-only runs so next session’s mode/drive see up-to-date state. | session-runner.ts (no-artifact branch: after persistTrajectoryReview, insert snapshot from previousState + session signals or stateToSnapshotRow with no-evaluation convention) | **Architecture closure** |
-| 2 | **Formalize system proposal intent** | Already done in proposal_resolution_lanes_canon.md. No code change. | — | **Done** |
-| 3 | **Trajectory feedback signal** | Feed one trajectory-derived signal (e.g. stall_count from last N trajectory_review) into mode/drive or state load. | session-runner.ts (loadCreativeStateAndBacklog or new loadTrajectoryContext); optionally packages/evaluation (computeSessionMode or computeDriveWeights) | **Architecture closure** |
-| 4 | **Verify project-thread-selection reads recurrence** | Confirm recurrence writeback influences focus. | project-thread-selection.ts | **Architecture closure** |
-
-### Group 2 — Runtime activation / incremental
+### Group 2 — Runtime activation / incremental (deferred)
 
 | # | Step | Purpose | Files | Label |
 |---|------|---------|--------|--------|
-| 5 | **Drive injection (optional)** | Only if product later chooses drive as steering input; canon currently treats it as descriptive. | packages/agent (generate-writing, generate-image, session-pipeline) | **Runtime activation** |
-| 6 | **Confidence as proposal gate** | Soft gate or warning when confidence_truth === "defaulted" (architecture audit Step 5). | session-runner.ts (manageProposals) | **Runtime activation** |
+| 5 | **Drive injection (optional)** | Only if product later chooses drive as steering input; canon currently treats it as descriptive. | packages/agent | **Runtime activation** |
+| 6 | **Confidence as proposal gate** | Soft gate or warning when confidence_truth === "defaulted". | session-runner.ts (manageProposals) | **Runtime activation** |
 
-### Group 3 — Later tuning
+### Group 3 — Later tuning (deferred)
 
 | # | Step | Purpose | Label |
 |---|------|---------|--------|
-| 7 | **Explicit concept intent layer** | Pre-generation intent (reflective vs habitat vs naming) and intent-specific prompts (architecture audit Step 7). | **Later tuning** |
-| 8 | **Multi-page habitat target** | Runner selects non-home page when staging evidence supports it (architecture audit Step 6). | **Later tuning** |
-| 9 | **Decision pressure signals** | Named pressure scalars in computeDriveWeights/computeSessionMode (architecture audit Step 9). | **Later tuning** |
+| 7 | **Explicit concept intent layer** | Pre-generation intent and intent-specific prompts. | **Later tuning** |
+| 8 | **Multi-page habitat target** | Runner selects non-home page when staging evidence supports it. | **Later tuning** |
+| 9 | **Decision pressure signals** | Named pressure scalars in computeDriveWeights/computeSessionMode. | **Later tuning** |
 
 ---
 
@@ -158,10 +172,10 @@ Reconciles `docs/architecture/architecture_closure_audit.md` §F (Implementation
 
 | Source | Change | Effect on this audit |
 |--------|--------|----------------------|
-| **docs/architecture/architecture_closure_audit.md** | Full map, closed (B) and partially closed (C), blockers (D), implementation sequence (F). | Used as reference; gaps D.1 (drive) and D.3 (system) resolved by canon; D.2 (trajectory feedback) and no-artifact snapshot retained as closure items. |
+| **docs/architecture/architecture_closure_audit.md** | Full map, closed (B) and partially closed (C), blockers (D), implementation sequence (F). | Used as reference; gaps D.1 (drive) and D.3 (system) resolved by canon; D.2 (trajectory feedback) and no-artifact snapshot now resolved by code. |
 | **docs/architecture/proposal_resolution_lanes_canon.md** | System proposals human-only; runner creation table. | D.3 resolved; system lane governance boundary closed. |
 | **docs/canon_v2/02_runtime/creative_metabolism.md** | Drive = descriptive/observability; not injected into generation. | D.1 resolved by reclassification; no mandatory code change for closure. |
-| **docs/architecture/current_vs_potential_systems.md** | Pipeline stages and “drive stored/traced only”. | Aligns with session-runner and canon. |
-| **Code (session-runner)** | No change in no-artifact path or trajectory read in state load. | Creative state snapshot still not written on no-artifact path; trajectory still not fed into mode/drive. |
+| **docs/architecture/current_vs_potential_systems.md** | Pipeline stages and "drive stored/traced only". | Aligns with session-runner and canon. |
+| **Code (session-runner, project-thread-selection, trajectory-feedback-adapter)** | (1) no-artifact snapshot wired; (2) trajectory advisory wired (one bounded Stage-2 signal); (3) recurrence loop instrumented. | All three pre-governance closure tasks resolved. |
 
-**Conclusion:** With the new canon and architecture audit in mind, the architecture remains **close but missing loops**. The smallest set of code changes to reach closure are: (1) persist creative_state_snapshot on the no-artifact path, and (2) add a trajectory-derived signal into next-session state or mode/drive. All other closure items are either done (system lane, drive reclassification) or deferred to later tuning.
+**Conclusion:** Architecture is **closed at pre-governance milestone**. The three final closure tasks are wired, logged, and reflected in the deliberation trace. Stage-1 contract preserved (no branch replacement; thought map not directly read by selectors; one bounded advisory via pre-computed state path only). Remaining items (drive injection, multi-page habitat, decision pressure) deferred to later tuning.

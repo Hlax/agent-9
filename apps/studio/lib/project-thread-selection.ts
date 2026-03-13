@@ -14,6 +14,12 @@ export interface ProjectThreadSelection {
   projectId: string | null;
   ideaThreadId: string | null;
   ideaId: string | null;
+  /** Recurrence/pull values for the selected thread (for continuity trace logging). */
+  selectedThreadRecurrenceScore?: number | null;
+  selectedThreadCreativePull?: number | null;
+  /** Recurrence/pull values for the selected idea (for continuity trace logging). */
+  selectedIdeaRecurrenceScore?: number | null;
+  selectedIdeaCreativePull?: number | null;
 }
 
 /** Optional bias from active session intent (soft boost for matching project/thread). */
@@ -80,7 +86,13 @@ export async function selectProjectAndThread(
     .limit(20);
 
   if (!threads?.length) {
-    return { projectId, ideaThreadId: null, ideaId: null };
+    return {
+      projectId,
+      ideaThreadId: null,
+      ideaId: null,
+      selectedThreadRecurrenceScore: null,
+      selectedThreadCreativePull: null,
+    };
   }
 
   const weights = threads.map((t) => {
@@ -107,7 +119,13 @@ export async function selectProjectAndThread(
 
   const ideaThreadId = chosen?.idea_thread_id ?? null;
   if (!ideaThreadId) {
-    return { projectId, ideaThreadId: null, ideaId: null };
+    return {
+      projectId,
+      ideaThreadId: null,
+      ideaId: null,
+      selectedThreadRecurrenceScore: null,
+      selectedThreadCreativePull: null,
+    };
   }
 
   // Select one idea from this thread (idea_to_thread → idea).
@@ -117,11 +135,23 @@ export async function selectProjectAndThread(
     .eq("idea_thread_id", ideaThreadId);
 
   if (!linkRows?.length) {
-    return { projectId, ideaThreadId, ideaId: null };
+    return {
+      projectId,
+      ideaThreadId,
+      ideaId: null,
+      selectedThreadRecurrenceScore: chosen?.recurrence_score ?? null,
+      selectedThreadCreativePull: chosen?.creative_pull ?? null,
+    };
   }
 
   const ideaIds = linkRows.map((row) => row.idea_id).filter(Boolean) as string[];
-  if (ideaIds.length === 0) return { projectId, ideaThreadId, ideaId: null };
+  if (ideaIds.length === 0) return {
+    projectId,
+    ideaThreadId,
+    ideaId: null,
+    selectedThreadRecurrenceScore: chosen?.recurrence_score ?? null,
+    selectedThreadCreativePull: chosen?.creative_pull ?? null,
+  };
 
   // Same recurrence loop: idea.recurrence_score is written by session-runner for selected idea; we weight by it here.
   const { data: ideas } = await supabase
@@ -130,7 +160,13 @@ export async function selectProjectAndThread(
     .in("idea_id", ideaIds)
     .eq("status", "active");
 
-  if (!ideas?.length) return { projectId, ideaThreadId, ideaId: null };
+  if (!ideas?.length) return {
+    projectId,
+    ideaThreadId,
+    ideaId: null,
+    selectedThreadRecurrenceScore: chosen?.recurrence_score ?? null,
+    selectedThreadCreativePull: chosen?.creative_pull ?? null,
+  };
 
   const ideaWeights = ideas.map((i) => {
     const r = i.recurrence_score ?? 0.5;
@@ -154,6 +190,10 @@ export async function selectProjectAndThread(
     projectId,
     ideaThreadId,
     ideaId: chosenIdea?.idea_id ?? null,
+    selectedThreadRecurrenceScore: chosen?.recurrence_score ?? null,
+    selectedThreadCreativePull: chosen?.creative_pull ?? null,
+    selectedIdeaRecurrenceScore: chosenIdea?.recurrence_score ?? null,
+    selectedIdeaCreativePull: chosenIdea?.creative_pull ?? null,
   };
 }
 
