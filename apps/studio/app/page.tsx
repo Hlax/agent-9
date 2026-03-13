@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { getSupabaseServer } from "@/lib/supabase-server";
-import { SignOut } from "./sign-out";
 import { StudioChat } from "./components/studio-chat";
 import { RuntimePanel } from "./components/runtime-panel";
 import { MetabolismPanel } from "./components/metabolism-panel";
@@ -46,40 +45,110 @@ export default async function StudioHome() {
       >
         <div>
           <h1 style={{ fontSize: "1.5rem", margin: 0 }}>Twin Studio</h1>
-          <p style={{ margin: "0.25rem 0 0", fontSize: "0.95rem", color: "#555" }}>Private operator interface.</p>
+          <p style={{ margin: "0.25rem 0 0", fontSize: "0.95rem", color: "#555" }}>
+            Private operator interface. Pipeline: Runtime → Proposals → Staging → Promotion → Live Twin.
+          </p>
         </div>
-        <nav
-          className="studio-nav"
+      </header>
+
+      {/* Pipeline overview */}
+      <section
+        style={{
+          maxWidth: 960,
+          width: "100%",
+          margin: "0 auto 1.5rem",
+          padding: "1rem",
+          background: "#f8f8f8",
+          borderRadius: 8,
+          border: "1px solid #e0e0e0",
+        }}
+      >
+        <h2 style={{ fontSize: "1rem", margin: "0 0 0.75rem", fontWeight: 600 }}>Pipeline</h2>
+        <div
           style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: "0.5rem",
-            alignItems: "center",
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+            gap: "0.75rem",
           }}
         >
-          <Link href="/">Twin</Link>
           <Link
-            href="/session"
+            href="/runtime"
             style={{
-              padding: "0.35rem 0.75rem",
-              background: "#111",
-              color: "#fff",
+              padding: "0.75rem",
+              background: "#fff",
+              border: "1px solid #ddd",
               borderRadius: 6,
-              fontWeight: 600,
+              textDecoration: "none",
+              color: "#111",
+              fontSize: "0.9rem",
             }}
           >
-            Start
+            <strong>Runtime</strong>
+            <p style={{ margin: "0.25rem 0 0", fontSize: "0.8rem", color: "#555" }}>Sessions, signals, trace</p>
           </Link>
-          <Link href="/source">🧠 (brain)</Link>
-          <Link href="/identity">🪪 Identity</Link>
-          <Link href="/session">▶️ Session</Link>
-          <Link href="/concepts">💡 Concepts</Link>
-          <Link href="/review/artifacts">📋 Artifacts</Link>
-          <Link href="/review">✅ Review</Link>
-          <Link href="/runtime">🔍 Runtime</Link>
-          <SignOut />
-        </nav>
-      </header>
+          <Link
+            href="/review"
+            style={{
+              padding: "0.75rem",
+              background: "#fff",
+              border: "1px solid #ddd",
+              borderRadius: 6,
+              textDecoration: "none",
+              color: "#111",
+              fontSize: "0.9rem",
+            }}
+          >
+            <strong>Proposals</strong>
+            <p style={{ margin: "0.25rem 0 0", fontSize: "0.8rem", color: "#555" }}>Review by lane</p>
+          </Link>
+          <Link
+            href="/review/staging"
+            style={{
+              padding: "0.75rem",
+              background: "#fff",
+              border: "1px solid #ddd",
+              borderRadius: 6,
+              textDecoration: "none",
+              color: "#111",
+              fontSize: "0.9rem",
+            }}
+          >
+            <strong>Staging</strong>
+            <p style={{ margin: "0.25rem 0 0", fontSize: "0.8rem", color: "#555" }}>Candidate workspace</p>
+          </Link>
+          <Link
+            href="/review/surface/habitat"
+            style={{
+              padding: "0.75rem",
+              background: "#fff",
+              border: "1px solid #ddd",
+              borderRadius: 6,
+              textDecoration: "none",
+              color: "#111",
+              fontSize: "0.9rem",
+            }}
+          >
+            <strong>Promotion</strong>
+            <p style={{ margin: "0.25rem 0 0", fontSize: "0.8rem", color: "#555" }}>Push to public, history</p>
+          </Link>
+          <Link
+            href="/live-twin"
+            style={{
+              padding: "0.75rem",
+              background: "#fff",
+              border: "1px solid #ddd",
+              borderRadius: 6,
+              textDecoration: "none",
+              color: "#111",
+              fontSize: "0.9rem",
+            }}
+          >
+            <strong>Live Twin</strong>
+            <p style={{ margin: "0.25rem 0 0", fontSize: "0.8rem", color: "#555" }}>What the public sees</p>
+          </Link>
+        </div>
+      </section>
+
       <div
         style={{
           maxWidth: 960,

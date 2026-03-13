@@ -2,6 +2,8 @@
 
 This document defines the Twin’s human-facing approval states for artifacts and how artifacts move between them.
 
+**Before changing proposal states, transitions, or governance logic:** run `docs/05_build/IMPLEMENTATION_CHECKLIST.md`.
+
 The Approval State Machine exists to answer a different question than self critique or evaluation.
 
 - self critique asks: what did this artifact do well or poorly?

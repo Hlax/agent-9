@@ -59,7 +59,7 @@ export default async function SurfaceReviewPage() {
         <section style={{ border: "1px solid #ddd", borderRadius: 8, padding: "1rem", display: "flex", flexDirection: "column" }}>
           <h2 style={{ fontSize: "1.1rem", margin: "0 0 0.35rem" }}>Habitat proposals</h2>
           <p style={{ fontSize: "0.9rem", color: "#555", margin: "0 0 0.75rem", flex: 1 }}>
-            Public habitat layout and content. Approve for <strong>staging</strong>, then push staging to public when ready.
+            Public habitat layout and content. Approve for staging = include in candidate habitat. Push staging to public = publish staged habitat as new public snapshot.
           </p>
           <Link href="/review/surface/habitat" style={{ fontWeight: 600, fontSize: "0.95rem" }}>
             Review habitat proposals →

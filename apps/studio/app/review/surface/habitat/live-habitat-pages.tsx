@@ -44,14 +44,14 @@ export function LiveHabitatPages() {
     }
   };
 
-  if (loading) return <p style={{ fontSize: "0.9rem", color: "#666" }}>Loading live pages…</p>;
-  if (pages.length === 0) return <p style={{ fontSize: "0.9rem", color: "#666" }}>No habitat pages currently live on the public site.</p>;
+  if (loading) return <p style={{ fontSize: "0.9rem", color: "#666" }}>Loading promotion output…</p>;
+  if (pages.length === 0) return <p style={{ fontSize: "0.9rem", color: "#666" }}>No promotion output yet. Push staging to public to create it.</p>;
 
   return (
     <section style={{ marginBottom: "1.5rem", padding: "0.75rem", background: "#f8f8f8", borderRadius: 8, border: "1px solid #ddd" }}>
-      <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Live on public site</h2>
+      <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Promotion output</h2>
       <p style={{ margin: "0 0 0.5rem", fontSize: "0.85rem", color: "#555" }}>
-        These slugs have content visible at freeartshow.net. Clear a slug to remove it from the public site (does not change proposals).
+        Content written by the promotion step (public_habitat_content). The public site serves from the latest snapshot. Clear a slug to remove it from promotion output (does not change proposals).
       </p>
       <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
         {pages.map((p) => (
@@ -67,7 +67,7 @@ export function LiveHabitatPages() {
               disabled={clearing === p.slug}
               style={{ marginLeft: "auto", padding: "0.2rem 0.5rem", fontSize: "0.8rem", borderRadius: 4 }}
             >
-              {clearing === p.slug ? "…" : "Clear from public"}
+              {clearing === p.slug ? "…" : "Clear"}
             </button>
           </li>
         ))}

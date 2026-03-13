@@ -48,6 +48,7 @@ Treat the following folders as the primary sources of truth:
 - `docs/04_product/surface_release_model.md`
 
 ### Build
+- `docs/05_build/IMPLEMENTATION_CHECKLIST.md` — run before changing routes, proposal contracts, snapshot logic, governance, staging/public paths, or promotion
 - `docs/05_build/build_architecture.md`
 - `docs/05_build/phase_4_build_contract.md`
 - `docs/05_build/v1_vertical_slice.md`
@@ -58,6 +59,7 @@ Treat the following folders as the primary sources of truth:
 ## Important Principles
 
 Build agents working in this repository should:
+- run **docs/05_build/IMPLEMENTATION_CHECKLIST.md** before architecture-sensitive changes (routes, proposal/snapshot/governance/staging/promotion)
 - follow the architecture defined in the documentation
 - preserve canonical names, enums, and state boundaries
 - avoid introducing new system concepts without updating glossary and data model

@@ -15,9 +15,9 @@ export default async function HabitatProposalReviewPage({
     <main>
       <h1>Public habitat proposal review</h1>
       <p>
-        Review habitat proposals in the <strong>surface lane</strong>. The preferred path is{" "}
-        <strong>approve for staging</strong>, then <strong>Push staging to public</strong>. Direct publish is reserved for
-        exceptions and legacy fixes.
+        Review habitat proposals in the <strong>surface lane</strong>. Approve for staging = include in candidate
+        habitat (not public). Push staging to public = publish staged habitat as new public snapshot. Direct publish is
+        reserved for exceptions and legacy fixes.
       </p>
       <p>
         <Link href="/review/surface">← Surface</Link>

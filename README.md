@@ -111,4 +111,4 @@ artifacts/
 
 ### Studio (for Harvey)
 
-Studio is the operator interface: review proposals by lane (habitat, artifacts, critiques, extensions, system), add notes and take actions, preview staged habitat before publish, then approve for publication when ready. Implementation details (routes, tables, snapshot flow) live in `docs/`.
+Studio is the operator interface: review proposals by lane (habitat, artifacts, critiques, extensions, system), add notes and take actions, preview staged habitat before publish, then approve for publication when ready. Implementation details live in `docs/`; the staging pipeline is documented in `docs/04_product/staging_pipeline_mvp_closure.md`.

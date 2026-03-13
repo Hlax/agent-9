@@ -64,7 +64,7 @@ Self critique, evaluation signals, approval rules, intervention rules, versionin
 Product overview, MVP scope, Studio, source ingestion, staging habitat, public habitat, release archive, surface release model.
 
 ### `docs/05_build`
-Build architecture, scaffold contract, vertical slice, scaffolding plan, seed ingestion, mind test spec.
+Build architecture, scaffold contract, vertical slice, scaffolding plan, seed ingestion, mind test spec. **Implementation Checklist** (`IMPLEMENTATION_CHECKLIST.md`) — run before changing routes, proposal contracts, snapshot logic, governance, staging/public paths, or promotion.
 
 ### `docs/agents`
 Repo context and coding-agent instructions.

@@ -6,6 +6,26 @@ The repository contains canonical design documents describing the system. Agents
 
 ---
 
+## 0. Before Implementing (Implementation Checklist)
+
+**Run docs/05_build/IMPLEMENTATION_CHECKLIST.md** before changing routes, proposal contracts, snapshot logic, governance logic, staging/public read paths, or promotion behavior.
+
+When starting a task, confirm:
+
+- Identify owning module (Runtime, Governance, Staging, Promotion, Public).
+- Call out any contract changes.
+- Confirm no public-truth violation (public reads from snapshot only).
+- Confirm no governance bypass.
+- Confirm runtime remains proposal-only.
+- Confirm staging remains candidate-only.
+- Confirm promotion remains snapshot-only (new row only, never mutate existing).
+- Confirm no projection treated as canonical.
+- Confirm data flow: Runtime → Proposal → Governance → Staging → Promotion → Public Snapshot (no skips).
+- Update docs if architecture changed.
+- Add tests for touched contracts.
+
+---
+
 ## 1. Canonical Document Order
 
 Read the documentation in this order before scaffolding:
@@ -50,16 +70,17 @@ Read the documentation in this order before scaffolding:
 31. `docs/04_product/surface_release_model.md`
 
 ### Build
-32. `docs/05_build/build_architecture.md`
-33. `docs/05_build/phase_4_build_contract.md`
-34. `docs/05_build/v1_vertical_slice.md`
-35. `docs/05_build/scaffolding_plan.md`
-36. `docs/05_build/identity_seed_ingestion.md`
-37. `docs/05_build/mind_test_spec.md`
+32. `docs/05_build/IMPLEMENTATION_CHECKLIST.md` — run before architecture-sensitive changes
+33. `docs/05_build/build_architecture.md`
+34. `docs/05_build/phase_4_build_contract.md`
+35. `docs/05_build/v1_vertical_slice.md`
+36. `docs/05_build/scaffolding_plan.md`
+37. `docs/05_build/identity_seed_ingestion.md`
+38. `docs/05_build/mind_test_spec.md`
 
 ### Agent instructions
-38. `docs/agents/repo_context.md`
-39. `docs/agents/coding_agent_architecture_rules.md`
+39. `docs/agents/repo_context.md`
+40. `docs/agents/coding_agent_architecture_rules.md`
 
 This order mirrors the system dependency chain.
 

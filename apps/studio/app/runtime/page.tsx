@@ -91,7 +91,7 @@ export default async function RuntimeDebugPage() {
   return (
     <main style={{ maxWidth: 720, margin: "0 auto", padding: "1rem" }}>
       <p>
-        <Link href="/">← Twin Studio</Link>
+        <Link href="/">← Studio</Link>
       </p>
       <h1>Runtime (debug)</h1>
       <p style={{ fontSize: "0.9rem", color: "#555" }}>

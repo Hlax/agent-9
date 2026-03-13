@@ -44,7 +44,7 @@ export default async function ReviewHubPage() {
       <h1>Review</h1>
       <p>Review proposals by decision lane. Each lane resolves differently.</p>
       <p>
-        <Link href="/">← Twin</Link>
+        <Link href="/">← Studio</Link>
       </p>
       <div className="review-grid">
         <section style={{ border: "1px solid #ddd", borderRadius: 8, padding: "1rem", display: "flex", flexDirection: "column" }}>

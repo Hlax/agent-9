@@ -8,6 +8,26 @@ development.
 
 ------------------------------------------------------------------------
 
+# 0. Pre-Implementation Gate (Staging / Governance / Public)
+
+Before implementing any feature that touches proposals, staging,
+promotion, snapshot, or public read path, apply **docs/05_build/IMPLEMENTATION_CHECKLIST.md**
+and confirm:
+
+- **Ownership:** Identify the owning module first (Runtime, Governance, Staging, Promotion, Public).
+- **Contract:** Call out any contract changes (proposal, snapshot, FSM, lineage).
+- **Public truth:** No new source of public truth; public read path remains snapshot-backed.
+- **Governance:** No governance bypass; transitions validated by canonical helpers (e.g. canTransitionProposalState).
+- **Runtime:** Runtime remains proposal-only; may not approve, publish, or snapshot.
+- **Staging:** Staging remains candidate-only; does not define public truth.
+- **Promotion:** Promotion remains snapshot-only; creates new immutable snapshot row, never mutates existing.
+- **Projections:** No projection table treated as canonical unless explicitly documented.
+- **Data flow:** Flow follows Runtime → Proposal → Governance → Staging → Promotion → Public Snapshot (no stage skipped).
+- **Docs:** Update architecture docs if contracts or boundaries changed.
+- **Tests:** Add or update tests for touched contracts.
+
+------------------------------------------------------------------------
+
 # 1. Respect Canonical Vocabulary
 
 The glossary defines canonical system terms.

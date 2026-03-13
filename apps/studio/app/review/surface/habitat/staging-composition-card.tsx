@@ -63,7 +63,7 @@ export function StagingCompositionCard() {
     <section style={{ border: "1px solid #ccc", borderRadius: 8, padding: "1rem", marginBottom: "1rem", background: "#fafafa" }}>
       <h2 style={{ fontSize: "1.1rem", margin: "0 0 0.5rem" }}>Staging composition</h2>
       <p style={{ margin: 0, fontSize: "0.85rem", color: "#555" }}>
-        Current staging habitat (branch head). Approving habitat proposals merges them here. Public updates only when you push.
+        Current staging habitat (candidate workspace). Approve for staging = include in candidate habitat. Public updates only when you push staging to public (promotion creates the new snapshot).
       </p>
       {pages.length === 0 ? (
         <p style={{ margin: "0.5rem 0 0", fontSize: "0.9rem", color: "#666" }}>No pages in staging yet. Approve a habitat proposal for staging to merge it.</p>
@@ -89,7 +89,7 @@ export function StagingCompositionCard() {
         >
           {promoting ? "Pushing…" : "Push staging to public"}
         </button>
-        <span style={{ fontSize: "0.8rem", color: "#666" }}>Human-only; no runner self-publish.</span>
+        <span style={{ fontSize: "0.8rem", color: "#666" }}>Publish staged habitat as new public snapshot. Human-only.</span>
       </div>
       {promotions.length > 0 && (
         <details style={{ marginTop: "0.75rem" }}>

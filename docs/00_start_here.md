@@ -37,6 +37,11 @@ These define the system's stable meaning and behavior.
 - `docs/03_governance/`
 - `docs/04_product/`
 
+## Overview (gates and boundaries)
+Pre-implementation filter for architecture-sensitive work.
+
+- **`docs/05_build/IMPLEMENTATION_CHECKLIST.md`** — run before changing routes, proposal contracts, snapshot logic, governance logic, staging/public read paths, or promotion behavior. Ensures work lands in the correct module and does not break public truth or governance boundaries.
+
 ## Build Guidance
 These explain how the scaffold should be implemented.
 
@@ -53,6 +58,9 @@ If build guidance conflicts with canon,
 ---
 
 # 3. Recommended Read Order
+
+## Step 0 — Implementation gate (before building)
+Run the Implementation Checklist before any architecture-sensitive change (routes, proposal states, snapshots, staging/public paths). See: **`docs/05_build/IMPLEMENTATION_CHECKLIST.md`**.
 
 ## Step 1 — Foundation
 Read first to understand what exists.

@@ -3,8 +3,9 @@ import { createClient } from "@/lib/supabase/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
 
 /**
- * GET /api/habitat-content/live — list slugs that currently have public content (title, body, or payload).
- * Used in Studio to show "Live on public site" and clear by slug when the originating proposal is unknown.
+ * GET /api/habitat-content/live — list slugs that have content in public_habitat_content (promotion output).
+ * Used in Studio to show "Promotion output" and clear by slug when the originating proposal is unknown.
+ * Note: The public site serves from habitat_snapshot, not this table; this is what promotion wrote.
  */
 export async function GET() {
   const authClient = await createClient().catch(() => null);

@@ -337,7 +337,7 @@ export default async function PublicHome() {
             textTransform: "uppercase",
           }}
         >
-          Hello Twin
+          Hello Twin!
         </h1>
       </section>
       {hasPayload ? (
