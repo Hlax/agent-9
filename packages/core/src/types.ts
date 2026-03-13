@@ -214,6 +214,41 @@ export interface ProposalRecord {
   artifact_id?: string | null;
 }
 
+/** Canonical lab-facing habitat proposal change type (V1). */
+export type HabitatProposalV1ChangeType =
+  | "update_current_focus"
+  | "add_recent_artifact"
+  | "add_summary_block";
+
+/**
+- Canonical lab-facing habitat proposal contract (V1).
+- Shared between Twin_V1 and the lab; do not add internal-only fields here.
+*/
+export interface HabitatProposalV1 {
+  proposal_id: string;
+  identity_id: string | null;
+  proposal_kind: "habitat_update";
+  target_surface: "home";
+  change_type: HabitatProposalV1ChangeType;
+  source_session_id: string | null;
+  source_artifact_id: string | null;
+  source_reason: string;
+  proposed_payload: Record<string, unknown>;
+}
+
+// Compile-time example: ensure this sample payload always satisfies the canonical contract.
+const _HABITAT_PROPOSAL_V1_SAMPLE: HabitatProposalV1 = {
+  proposal_id: "sample-id",
+  identity_id: null,
+  proposal_kind: "habitat_update",
+  target_surface: "home",
+  change_type: "update_current_focus",
+  source_session_id: null,
+  source_artifact_id: null,
+  source_reason: "Sample compile-time contract assertion.",
+  proposed_payload: {},
+};
+
 export interface GenerationRun {
   generation_run_id: string;
   session_id: string;

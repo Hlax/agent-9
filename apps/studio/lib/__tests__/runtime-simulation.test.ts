@@ -834,5 +834,43 @@ describe("simulateSessionDecision — habitat proposals", () => {
     expect(types).toContain("add_recent_artifact");
     expect(types).toContain("add_summary_block");
   });
+
+  it("returns bridge proposals without internal-only fields", () => {
+    const previousState = defaultCreativeState();
+    const result = simulateSessionDecision({
+      previousState,
+      liveBacklog: 0,
+      synthesisPressure: makeSynthesisPressure(),
+      activeIntent: null,
+      trajectoryAdvisory: null,
+      runtimeTrajectory: makeRuntimeTrajectory({ proposal_pressure: "normal" }),
+      preferMedium: "concept",
+      isCron: false,
+      critiqueOutcome: "continue",
+      critiqueMediumFitNote: null,
+      decisionConfidence: 0.8,
+      artifactMedium: "concept",
+      conceptTargetSurface: "staging_habitat",
+      habitatContext: {
+        identityId: "identity-1",
+        previousFocus: "Earlier focus",
+        currentFocus: "Closing the first publish governance loop",
+        milestoneArtifact: {
+          artifact_id: "art-1",
+          title: "Stage 2 editing workflow complete",
+          summary:
+            "Added bounded staging edits, publish review, and promotion flow.",
+          isMilestone: true,
+        },
+      },
+    });
+
+    expect(result.habitat_proposal_count).toBeGreaterThan(0);
+    for (const p of result.habitat_proposals) {
+      expect("confidence" in p).toBe(false);
+      expect("created_at" in p).toBe(false);
+      expect("status" in p).toBe(false);
+    }
+  });
 });
 

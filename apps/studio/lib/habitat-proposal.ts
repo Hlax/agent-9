@@ -1,56 +1,19 @@
-import type { ProposalRecord } from "@twin/core";
+import type {
+  HabitatProposalV1,
+  HabitatProposalV1ChangeType,
+} from "@twin/core";
 
 /**
- * Narrow V1 habitat proposal kind. These proposals are lab-ingestible
- * candidates for updating the public "home" surface, not direct edits.
+ * Twin_V1-internal habitat proposal shape.
+ * Extends the shared bridge contract with runtime-only fields.
  */
-export type HabitatChangeType =
-  | "update_current_focus"
-  | "add_recent_artifact"
-  | "add_summary_block";
-
-export interface HabitatProposalV1 {
-  /** Local identifier for the proposal candidate (not DB primary key). */
-  proposal_id: string;
-  /** Identity this proposal is associated with (nullable for now). */
-  identity_id: string | null;
-  /** Fixed kind for this V1 contract. */
-  proposal_kind: "habitat_update";
-  /** Target surface within the habitat system. */
-  target_surface: "home";
-  /** What kind of change this proposal represents. */
-  change_type: HabitatChangeType;
-  /** Optional continuity linkage to the originating session. */
-  source_session_id: string | null;
-  /** Optional linkage to the originating artifact (e.g. milestone concept). */
-  source_artifact_id: string | null;
-  /** Human-readable reason for the proposed change. */
-  source_reason: string;
-  /** Minimal, explicit payload suitable for later ingestion. */
-  proposed_payload: Record<string, unknown>;
+export interface TwinHabitatProposal extends HabitatProposalV1 {
   /** Confidence signal from runtime (0–1) or null when unavailable. */
   confidence: number | null;
   /** ISO timestamp when the proposal candidate was generated. */
   created_at: string;
   /** Simple lifecycle hint for downstream tooling; not a full FSM. */
   status: "candidate" | "superseded";
-}
-
-/**
- * Narrow bridge contract for lab ingestion.
- * This intentionally strips Twin_V1-only fields (confidence, created_at, status)
- * so that outbound payloads match the lab's strict HabitatProposalV1 schema.
- */
-export interface LabHabitatProposalV1 {
-  proposal_id: string;
-  identity_id: string | null;
-  proposal_kind: "habitat_update";
-  target_surface: "home";
-  change_type: HabitatChangeType;
-  source_session_id: string | null;
-  source_artifact_id: string | null;
-  source_reason: string;
-  proposed_payload: Record<string, unknown>;
 }
 
 /**
@@ -102,7 +65,7 @@ function makeProposalId(factory?: () => string): string {
  */
 export function generateHabitatProposals(
   ctx: HabitatProposalGenerationContext
-): HabitatProposalV1[] {
+): TwinHabitatProposal[] {
   const {
     identityId,
     sessionId,
@@ -115,10 +78,10 @@ export function generateHabitatProposals(
   } = ctx;
 
   const createdAt = now ?? new Date().toISOString();
-  const proposals: HabitatProposalV1[] = [];
+  const proposals: TwinHabitatProposal[] = [];
 
   const base: Pick<
-    HabitatProposalV1,
+    TwinHabitatProposal,
     | "identity_id"
     | "proposal_kind"
     | "target_surface"
@@ -143,7 +106,7 @@ export function generateHabitatProposals(
     proposals.push({
       proposal_id: makeProposalId(proposalIdFactory),
       ...base,
-      change_type: "update_current_focus",
+      change_type: "update_current_focus" satisfies HabitatProposalV1ChangeType,
       source_artifact_id: milestoneArtifact?.artifact_id ?? null,
       source_reason:
         "Current focus changed materially; propose updating the home habitat focus block.",
@@ -168,7 +131,7 @@ export function generateHabitatProposals(
     proposals.push({
       proposal_id: makeProposalId(proposalIdFactory),
       ...base,
-      change_type: "add_recent_artifact",
+      change_type: "add_recent_artifact" satisfies HabitatProposalV1ChangeType,
       source_artifact_id: milestoneArtifact.artifact_id,
       source_reason:
         "Milestone artifact detected; propose adding a recent-artifact block to the home habitat.",
@@ -186,7 +149,7 @@ export function generateHabitatProposals(
     proposals.push({
       proposal_id: makeProposalId(proposalIdFactory),
       ...base,
-      change_type: "add_summary_block",
+      change_type: "add_summary_block" satisfies HabitatProposalV1ChangeType,
       source_artifact_id: milestoneArtifact.artifact_id,
       source_reason:
         "Milestone artifact detected; propose a short summary text block for the home habitat.",
@@ -205,12 +168,12 @@ export function generateHabitatProposals(
 }
 
 /**
- * Convert a rich internal HabitatProposalV1 into the narrow lab bridge shape.
- * Only the fields in the strict HabitatProposalV1 contract are preserved.
+ * Convert a rich internal TwinHabitatProposal into the shared bridge shape.
+ * Only the fields in the canonical HabitatProposalV1 contract are preserved.
  */
-export function toLabHabitatProposalV1(
-  proposal: HabitatProposalV1
-): LabHabitatProposalV1 {
+export function toBridgeHabitatProposalV1(
+  proposal: TwinHabitatProposal
+): HabitatProposalV1 {
   return {
     proposal_id: proposal.proposal_id,
     identity_id: proposal.identity_id,
@@ -225,11 +188,11 @@ export function toLabHabitatProposalV1(
 }
 
 /**
- * Map an array of rich proposals to the strict lab-facing bridge contract.
+ * Map an array of rich proposals to the shared bridge contract.
  */
-export function toLabHabitatProposalV1List(
-  proposals: HabitatProposalV1[]
-): LabHabitatProposalV1[] {
-  return proposals.map(toLabHabitatProposalV1);
+export function toBridgeHabitatProposalV1List(
+  proposals: TwinHabitatProposal[]
+): HabitatProposalV1[] {
+  return proposals.map(toBridgeHabitatProposalV1);
 }
 

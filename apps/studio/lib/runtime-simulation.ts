@@ -19,12 +19,12 @@ import type {
 } from "@twin/mediums";
 import { resolveExecutedMedium, applyCapabilityFit, computeProposalConfidenceMin } from "./session-runner";
 import { classifyProposalLane, type LaneType } from "./proposal-governance";
+import type { HabitatProposalV1 } from "@twin/core";
 import {
   generateHabitatProposals,
-  type HabitatProposalV1,
+  type TwinHabitatProposal,
   type HabitatProposalGenerationContext,
-  type LabHabitatProposalV1,
-  toLabHabitatProposalV1List,
+  toBridgeHabitatProposalV1List,
 } from "./habitat-proposal";
 
 export interface SimulationInputs {
@@ -114,7 +114,7 @@ export interface SimulationResult {
   /** Structured observability trace for this simulation run. */
   trace: SimulationTrace;
   /** Structured habitat proposals (home surface) generated for this scenario. */
-  habitat_proposals: LabHabitatProposalV1[];
+  habitat_proposals: HabitatProposalV1[];
   habitat_proposal_count: number;
   habitat_proposal_types: ("update_current_focus" | "add_recent_artifact" | "add_summary_block")[];
 }
@@ -437,7 +437,7 @@ export function simulateSessionDecision(inputs: SimulationInputs): SimulationRes
   });
 
   // Structured habitat proposals (home surface, lab-ingestible).
-  const habitatProposalsRich: HabitatProposalV1[] = inputs.habitatContext
+  const habitatProposalsRich: TwinHabitatProposal[] = inputs.habitatContext
     ? generateHabitatProposals({
         identityId: inputs.habitatContext.identityId,
         sessionId: null,
@@ -447,7 +447,7 @@ export function simulateSessionDecision(inputs: SimulationInputs): SimulationRes
         decisionConfidence: decisionConfidence ?? null,
       })
     : [];
-  const habitat_proposals = toLabHabitatProposalV1List(habitatProposalsRich);
+  const habitat_proposals = toBridgeHabitatProposalV1List(habitatProposalsRich);
   const habitat_proposal_count = habitat_proposals.length;
   const habitat_proposal_types = habitat_proposals.map((p) => p.change_type);
 

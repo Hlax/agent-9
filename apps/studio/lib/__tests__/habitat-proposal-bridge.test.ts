@@ -3,10 +3,11 @@ import { z } from "zod";
 import {
   generateHabitatProposals,
   type HabitatProposalGenerationContext,
-  type HabitatProposalV1,
-  toLabHabitatProposalV1,
-  toLabHabitatProposalV1List,
+  type TwinHabitatProposal,
+  toBridgeHabitatProposalV1,
+  toBridgeHabitatProposalV1List,
 } from "../habitat-proposal";
+import type { HabitatProposalV1 } from "@twin/core";
 
 const LabHabitatProposalV1Schema = z
   .object({
@@ -47,7 +48,7 @@ describe("HabitatProposalV1 → LabHabitatProposalV1 bridge", () => {
     const [rich] = generateHabitatProposals(makeCtx());
     expect(rich).toBeDefined();
 
-    const bridged = toLabHabitatProposalV1(rich as HabitatProposalV1);
+    const bridged = toBridgeHabitatProposalV1(rich as TwinHabitatProposal) as HabitatProposalV1;
 
     const keys = Object.keys(bridged).sort();
     expect(keys).toEqual([
@@ -70,7 +71,7 @@ describe("HabitatProposalV1 → LabHabitatProposalV1 bridge", () => {
 
   it("produces payloads that pass the strict lab validator", () => {
     const rich = generateHabitatProposals(makeCtx());
-    const bridged = toLabHabitatProposalV1List(rich);
+    const bridged = toBridgeHabitatProposalV1List(rich as TwinHabitatProposal[]);
     expect(bridged.length).toBeGreaterThan(0);
 
     for (const p of bridged) {

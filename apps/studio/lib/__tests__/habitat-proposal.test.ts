@@ -1,9 +1,6 @@
 import { describe, it, expect } from "vitest";
-import {
-  generateHabitatProposals,
-  type HabitatProposalGenerationContext,
-  type HabitatProposalV1,
-} from "../habitat-proposal";
+import { generateHabitatProposals, type HabitatProposalGenerationContext } from "../habitat-proposal";
+import type { HabitatProposalV1 } from "@twin/core";
 
 function makeCtx(
   overrides: Partial<HabitatProposalGenerationContext> = {}
