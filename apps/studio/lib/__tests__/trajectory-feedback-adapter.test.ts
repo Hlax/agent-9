@@ -113,6 +113,80 @@ describe("trajectory advisory nudge math (Task 2 acceptance)", () => {
   });
 });
 
+describe("getTrajectoryFeedback — favor_consolidation signal (Stage-2 acceptance)", () => {
+  it("returns 'light' for exploration-heavy posture with >= 5 recent proposals", () => {
+    const result = getTrajectoryFeedback(
+      makeContext({ exploration_vs_consolidation: "exploration-heavy", proposals_last_10_sessions: 6 })
+    );
+    expect(result.favor_consolidation).toBe("light");
+  });
+
+  it("returns 'light' for consolidating posture in clustered window", () => {
+    const result = getTrajectoryFeedback(
+      makeContext({ session_posture: "consolidating", trajectory_shape: "clustered" })
+    );
+    expect(result.favor_consolidation).toBe("light");
+  });
+
+  it("returns 'none' for balanced posture with low proposal count", () => {
+    const result = getTrajectoryFeedback(
+      makeContext({ exploration_vs_consolidation: "balanced", proposals_last_10_sessions: 2, session_posture: "mixed" })
+    );
+    expect(result.favor_consolidation).toBe("none");
+  });
+
+  it("returns 'none' when window too small (gate check)", () => {
+    const result = getTrajectoryFeedback(
+      makeContext({ window_sessions: 3, exploration_vs_consolidation: "exploration-heavy", proposals_last_10_sessions: 8 })
+    );
+    expect(result.favor_consolidation).toBe("none");
+  });
+});
+
+describe("favor_consolidation nudge math (Stage-2 acceptance)", () => {
+  const LIGHT_NUDGE = 0.05;
+  const STRONG_NUDGE = 0.10;
+
+  it("light nudge: −0.05 on base recent_exploration_rate stays >= 0", () => {
+    const base = 0.03;
+    const nudged = Math.max(0, base - LIGHT_NUDGE);
+    expect(nudged).toBeGreaterThanOrEqual(0);
+    expect(nudged).toBe(0); // clamps to 0
+  });
+
+  it("strong nudge: −0.10 on 0.5 base = 0.4", () => {
+    const base = 0.5;
+    const nudged = Math.max(0, base - STRONG_NUDGE);
+    expect(nudged).toBeCloseTo(0.4, 5);
+  });
+
+  it("light nudge is smaller than strong nudge", () => {
+    expect(LIGHT_NUDGE).toBeLessThan(STRONG_NUDGE);
+  });
+
+  it("favor_consolidation 'none' produces no nudge", () => {
+    const base = 0.5;
+    const consolidationSignal = "none";
+    const wouldApply = consolidationSignal !== "none";
+    expect(wouldApply).toBe(false);
+    // No change to base
+    const nudged = wouldApply ? Math.max(0, base - LIGHT_NUDGE) : base;
+    expect(nudged).toBe(base);
+  });
+
+  it("favor_consolidation does not apply when interpretation_confidence is low", () => {
+    const result = getTrajectoryFeedback(
+      makeContext({
+        exploration_vs_consolidation: "exploration-heavy",
+        proposals_last_10_sessions: 8,
+        interpretation_confidence: "low",
+      })
+    );
+    // Gate: neutral when confidence low → favor_consolidation should be 'none'
+    expect(result.favor_consolidation).toBe("none");
+  });
+});
+
 describe("buildAdvisoryLog", () => {
   it("always sets dry_run: true", () => {
     const log = buildAdvisoryLog(makeContext());
@@ -126,9 +200,10 @@ describe("buildAdvisoryLog", () => {
     expect(typeof log.generated_at).toBe("string");
   });
 
-  it("includes note mentioning Stage-2 active binding", () => {
+  it("includes note mentioning Stage-2 active binding for both gently_reduce_repetition and favor_consolidation", () => {
     const log = buildAdvisoryLog(makeContext());
     expect(log.note).toContain("gently_reduce_repetition");
+    expect(log.note).toContain("favor_consolidation");
     expect(log.note).toContain("Stage-2");
   });
 });

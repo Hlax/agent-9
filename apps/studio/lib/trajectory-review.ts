@@ -77,7 +77,13 @@ export interface TrajectoryReviewRow {
   issues_json: { items: string[] } | null;
   strengths_json: { items: string[] } | null;
   learning_signal: string | null;
-  /** Reserved: persisted for analytics/future use. Not consumed by any selector (Trajectory Feedback V1 audit). Do not assume control-active. */
+  /**
+   * Feed-forward to session intent: recommended next action kind based on this session's trajectory.
+   * Read by session-runner (via persistTrajectoryReview → buildIntentUpdateInput) and forwarded to
+   * updateSessionIntent, which uses it to seed the next active intent's kind and evidence_json.
+   * Examples: "resurface_archive" biases next intent toward "return"; "generate_habitat_candidate"
+   * toward "consolidate". Null when no recommendation applies.
+   */
   recommended_next_action_kind: string | null;
 }
 
@@ -268,7 +274,7 @@ export function deriveTrajectoryReview(
     issues_json: issues.length > 0 ? { items: issues } : null,
     strengths_json: strengths.length > 0 ? { items: strengths } : null,
     learning_signal: learningSignal(input, outcomeKind),
-    // Reserved: not yet read by mode/focus/proposal logic (Trajectory Feedback V1).
+    // Feed-forward to session intent (consumed by session-runner → updateSessionIntent).
     recommended_next_action_kind: recommendedNextActionKind(input, outcomeKind),
   };
 }
