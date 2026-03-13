@@ -89,6 +89,99 @@ export interface SimulationResult {
   target_surface: string | null;
   /** High-level proposal outcome under this simulation (no DB / caps). */
   proposal_outcome: "none" | "eligible" | "skipped_confidence";
+  /** Structured observability trace for this simulation run. */
+  trace: SimulationTrace;
+}
+
+/**
+ * Structured observability trace emitted alongside each simulation result.
+ * Fields are human-readable notes explaining key runtime decisions.
+ */
+export interface SimulationTrace {
+  /** Human-readable note on the effective proposal confidence floor. */
+  proposal_confidence_floor_note: string;
+  /** Human-readable note on proposal_pressure adjustment; null when pressure is "normal" with no change. */
+  proposal_pressure_note: string | null;
+  /** Human-readable note on medium fallback when executed_medium differs from requested_medium; null when no fallback occurred. */
+  medium_fallback_note: string | null;
+}
+
+/**
+ * A named, replayable scenario fixture bundling inputs and optional metadata.
+ * Use with {@link runScenario} for deterministic scenario replay and benchmarking.
+ */
+export interface ScenarioFixture {
+  /** Unique name for this scenario (used for identification in diffs and reports). */
+  name: string;
+  /** Optional human-readable description of what this scenario exercises. */
+  description?: string;
+  /** Simulation inputs for this scenario. */
+  inputs: SimulationInputs;
+}
+
+/**
+ * Structured diff output produced by {@link compareSimulationResults}.
+ * Separates fields that changed from fields that stayed the same.
+ */
+export interface SimulationResultDiff {
+  /** Fields whose values differ between the two results. */
+  changed: Array<{ field: string; a: unknown; b: unknown }>;
+  /** Fields whose values are identical between the two results. */
+  unchanged: string[];
+}
+
+/**
+ * Run a named scenario fixture and return its simulation result.
+ * Thin convenience wrapper around {@link simulateSessionDecision} for use
+ * in benchmarks and replay harnesses.
+ */
+export function runScenario(fixture: ScenarioFixture): SimulationResult {
+  return simulateSessionDecision(fixture.inputs);
+}
+
+/**
+ * Compare two simulation results and return a structured diff.
+ * The `trace` field is intentionally excluded — it is observability-only and
+ * should not affect scenario equivalence checks.
+ */
+export function compareSimulationResults(
+  a: SimulationResult,
+  b: SimulationResult
+): SimulationResultDiff {
+  const changed: Array<{ field: string; a: unknown; b: unknown }> = [];
+  const unchanged: string[] = [];
+
+  // NOTE: This list must be kept in sync with the fields of SimulationResult (excluding `trace`,
+  // `activeIntent`, and `drive` — the latter is probabilistic and excluded intentionally).
+  // TypeScript types are erased at runtime, so this cannot be derived automatically.
+  const keysToCompare: Array<keyof Omit<SimulationResult, "trace">> = [
+    "mode",
+    "drive",
+    "requested_medium",
+    "executed_medium",
+    "fallback_reason",
+    "resolution_source",
+    "medium_fit",
+    "missing_capability",
+    "extension_classification",
+    "proposal_pressure",
+    "proposal_confidence_min_base",
+    "proposal_confidence_min_effective",
+    "proposal_pressure_applied",
+    "lane_type",
+    "target_surface",
+    "proposal_outcome",
+  ];
+
+  for (const key of keysToCompare) {
+    if (a[key] !== b[key]) {
+      changed.push({ field: key, a: a[key], b: b[key] });
+    } else {
+      unchanged.push(key);
+    }
+  }
+
+  return { changed, unchanged };
 }
 
 /** Internal: apply the same soft biases as selectModeAndDrive, but in a pure helper. */
@@ -304,6 +397,16 @@ export function simulateSessionDecision(inputs: SimulationInputs): SimulationRes
     }
   }
 
+  const trace = buildSimulationTrace({
+    baseConfidenceMin,
+    proposal_confidence_min_effective,
+    proposal_pressure,
+    proposal_pressure_applied,
+    requested_medium: requested_medium ?? null,
+    executed_medium,
+    fallback_reason,
+  });
+
   return {
     mode,
     drive,
@@ -322,6 +425,49 @@ export function simulateSessionDecision(inputs: SimulationInputs): SimulationRes
     lane_type,
     target_surface,
     proposal_outcome,
+    trace,
   };
+}
+
+/** Internal: build a structured observability trace for a simulation run. */
+function buildSimulationTrace({
+  baseConfidenceMin,
+  proposal_confidence_min_effective,
+  proposal_pressure,
+  proposal_pressure_applied,
+  requested_medium,
+  executed_medium,
+  fallback_reason,
+}: {
+  baseConfidenceMin: number;
+  proposal_confidence_min_effective: number;
+  proposal_pressure: RuntimeTrajectory["proposal_pressure"];
+  proposal_pressure_applied: boolean;
+  requested_medium: string | null;
+  executed_medium: string;
+  fallback_reason: FallbackReason | null;
+}): SimulationTrace {
+  const proposal_confidence_floor_note =
+    `Effective floor: ${proposal_confidence_min_effective.toFixed(3)}` +
+    ` (base: ${baseConfidenceMin.toFixed(3)}, proposal_pressure: ${proposal_pressure})`;
+
+  let proposal_pressure_note: string | null = null;
+  if (proposal_pressure_applied) {
+    const direction = proposal_confidence_min_effective > baseConfidenceMin ? "raised" : "lowered";
+    proposal_pressure_note =
+      `proposal_pressure '${proposal_pressure}' ${direction} floor` +
+      ` from ${baseConfidenceMin.toFixed(3)} to ${proposal_confidence_min_effective.toFixed(3)}`;
+  }
+
+  let medium_fallback_note: string | null = null;
+  if (fallback_reason !== null && requested_medium !== null && executed_medium !== requested_medium) {
+    medium_fallback_note =
+      `Requested '${requested_medium}' fell back to '${executed_medium}': ${fallback_reason}`;
+  } else if (fallback_reason !== null && requested_medium === null) {
+    // No explicit medium was provided; the registry resolved a default but still emitted a fallback_reason.
+    medium_fallback_note = `No explicit medium requested; resolved to '${executed_medium}': ${fallback_reason}`;
+  }
+
+  return { proposal_confidence_floor_note, proposal_pressure_note, medium_fallback_note };
 }
 
