@@ -3,7 +3,6 @@
 A governed creative system that explores identity through artifacts over time.
 
 This repository is for the **scaffolding and deployment foundation** of the Twin.
-It is not just a content generator and it is not a fully autonomous agent.
 The Twin generates, critiques, evaluates, remembers, and proposes.
 Harvey reviews, approves, stages, and publishes.
 
