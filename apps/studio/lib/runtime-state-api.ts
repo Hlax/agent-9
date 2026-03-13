@@ -529,13 +529,15 @@ export function attachThreadTransitionAndStreak(
   rows: Omit<SessionTimelineRow, "thread_transition" | "thread_streak_length">[]
 ): SessionTimelineRow[] {
   const n = rows.length;
-  const streak: number[] = new Array(n);
+  const streak: number[] = new Array(n).fill(0);
   for (let i = n - 1; i >= 0; i--) {
-    const tid = rows[i].thread_id ?? null;
+    const row = rows[i]!;
+    const tid = row.thread_id ?? null;
+
     if (tid == null) {
       streak[i] = 0;
-    } else if (i + 1 < n && (rows[i + 1].thread_id ?? null) === tid) {
-      streak[i] = 1 + streak[i + 1]!;
+    } else if (i + 1 < n && (rows[i + 1]!.thread_id ?? null) === tid) {
+      streak[i] = (streak[i + 1] ?? 0) + 1;
     } else {
       streak[i] = 1;
     }
@@ -544,7 +546,7 @@ export function attachThreadTransitionAndStreak(
     let thread_transition: ThreadTransition = "no-thread";
     if (i < n - 1) {
       const a = row.thread_id ?? null;
-      const b = rows[i + 1].thread_id ?? null;
+      const b = rows[i + 1]!.thread_id ?? null;
       if (a != null && b != null) {
         thread_transition = a === b ? "same-thread" : "thread-switch";
       }
@@ -589,8 +591,8 @@ export function computeSessionClusteringSummary(rows: SessionTimelineRow[]): Ses
   let comparable_pairs = 0;
   let repeat_count = 0;
   for (let i = 0; i < rows.length - 1; i++) {
-    const a = rows[i].thread_id;
-    const b = rows[i + 1].thread_id;
+    const a = rows[i]!.thread_id;
+    const b = rows[i + 1]!.thread_id;
     if (a != null && b != null) {
       comparable_pairs++;
       if (a === b) repeat_count++;
