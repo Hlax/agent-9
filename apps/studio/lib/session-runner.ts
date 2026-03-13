@@ -91,6 +91,7 @@ import {
   type TrajectoryFeedbackResult,
   type TrajectoryFeedbackContext,
 } from "@/lib/trajectory-feedback-adapter";
+import type { RuntimeTrajectory } from "@/lib/runtime-trajectory";
 
 function buildIntentUpdateInput(state: SessionExecutionState): IntentUpdateInput | null {
   const result = state.pipelineResult;
@@ -285,6 +286,8 @@ interface SessionExecutionState {
     feedback: TrajectoryFeedbackResult;
     interpretation_confidence: "low" | "medium" | "high";
   } | null;
+  /** Runtime trajectory snapshot for this session (advisory-only). Carries proposal_pressure into proposal cadence logic. */
+  runtimeTrajectory?: RuntimeTrajectory | null;
   /** Governance evidence for this session's proposal decision (when applicable). */
   governanceEvidence?: {
     lane_type: "surface" | "medium" | "system";
@@ -812,6 +815,8 @@ async function buildContexts(state: SessionExecutionState): Promise<SessionExecu
     }
   }
 
+  let runtimeTrajectory: RuntimeTrajectory | null = state.runtimeTrajectory ?? null;
+
   if (state.supabase) {
     const styleWindowSize = 40;
     const [styleArtifactsRes, styleProposalsRes] = await Promise.all([
@@ -888,10 +893,7 @@ async function buildContexts(state: SessionExecutionState): Promise<SessionExecu
 
     // Soft trajectory guidance: fetch current runtime trajectory and surface as advisory context only.
     const runtimePayload = await getRuntimeStatePayload(state.supabase);
-    const trajectory = (runtimePayload as Record<string, any>).trajectory as
-      | { mode: string; horizon_sessions: number; reason: string; focus_bias?: string[]; style_direction?: string; proposal_pressure?: string }
-      | null
-      | undefined;
+    const trajectory = (runtimePayload as { trajectory?: RuntimeTrajectory | null }).trajectory ?? null;
     if (trajectory) {
       const lines: string[] = [];
       lines.push("Runtime trajectory (directional guidance for this session; do not override governance or safety):");
@@ -913,10 +915,11 @@ async function buildContexts(state: SessionExecutionState): Promise<SessionExecu
       );
       const trajectoryBlock = lines.join("\n");
       workingContext = [workingContext, trajectoryBlock].filter(Boolean).join("\n\n");
+      runtimeTrajectory = trajectory;
     }
   }
 
-  return { ...state, brainContext, workingContext, sourceContext };
+  return { ...state, brainContext, workingContext, sourceContext, runtimeTrajectory };
 }
 
 /** Temporary global fallback when requested medium is not executable. Long-term: plugin-defined fallback, registry default, or derivation retry. */
@@ -1240,6 +1243,29 @@ export async function runSessionInternal(options: SessionRunOptions): Promise<Se
 const LOW_CONFIDENCE_THRESHOLD = 0.35;
 /** Confidence below this skips creating/updating proposals (loop closure: avoid weak sessions polluting backlog). */
 const PROPOSAL_CONFIDENCE_MIN = 0.4;
+
+/**
+ * Compute a bounded confidence floor for proposal creation based on proposal_pressure.
+ * - "high" pressure (backlog heavy) slightly raises the floor to damp cadence.
+ * - "low" pressure slightly lowers the floor to allow more proposals when backlog is light.
+ * - "normal" leaves the floor unchanged.
+ *
+ * The adjustment is small (±0.05) and clamped to [0, 1] so it can never hard-block proposals
+ * beyond the existing governance gates and caps.
+ */
+export function computeProposalConfidenceMin(
+  baseMin: number,
+  proposalPressure?: "low" | "normal" | "high" | null
+): number {
+  const DELTA = 0.05;
+  if (proposalPressure === "high") {
+    return Math.min(1, baseMin + DELTA);
+  }
+  if (proposalPressure === "low") {
+    return Math.max(0, baseMin - DELTA);
+  }
+  return baseMin;
+}
 
 function finalizeResult(state: SessionExecutionState): SessionRunSuccessPayload {
   const result = state.pipelineResult;
@@ -1794,10 +1820,22 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
       };
     }
 
+    const proposalPressure = state.runtimeTrajectory?.proposal_pressure ?? "normal";
+    const effectiveConfidenceMin = computeProposalConfidenceMin(
+      PROPOSAL_CONFIDENCE_MIN,
+      proposalPressure
+    );
+    if (effectiveConfidenceMin !== PROPOSAL_CONFIDENCE_MIN) {
+      console.log("[session] proposal_pressure_applied", {
+        proposal_pressure: proposalPressure,
+        base_confidence_min: PROPOSAL_CONFIDENCE_MIN,
+        effective_confidence_min: effectiveConfidenceMin,
+      });
+    }
     const hasMinimumEvidence =
       state.confidence_truth === "inferred" &&
       typeof confidence === "number" &&
-      confidence >= PROPOSAL_CONFIDENCE_MIN;
+      confidence >= effectiveConfidenceMin;
     const gate = evaluateGovernanceGate({
       lane_type: laneInfo.lane_type,
       proposal_role: laneInfo.proposal_role ?? "habitat_layout",

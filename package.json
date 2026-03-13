@@ -10,6 +10,8 @@
     "dev:staging": "pnpm --filter habitat-staging dev",
     "dev:public": "pnpm --filter public-site dev",
     "lint": "pnpm -r run lint",
+    "test": "pnpm -r run test",
+    "typecheck": "pnpm -r run typecheck",
     "db:generate": "pnpm exec supabase gen types typescript --local -o packages/core/src/db-types.ts",
     "db:backup": "node scripts/db-backup.js",
     "db:migrate": "pnpm exec supabase db push",

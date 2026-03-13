@@ -47,15 +47,54 @@ export function HabitatProposalList({ view }: { view: "pending_review" | "approv
   const [approving, setApproving] = useState<string | null>(null);
   const [archiving, setArchiving] = useState<string | null>(null);
   const [patching, setPatching] = useState<string | null>(null);
+  const [publishReview, setPublishReview] = useState<{
+    significance: string;
+    recommendation: string;
+    advisory_flags: {
+      likely_duplicate: boolean;
+      likely_reversion: boolean;
+      high_recent_volatility: boolean;
+      too_soon_since_last_public: boolean;
+      no_current_public: boolean;
+    };
+  } | null>(null);
+  const [publishReviewError, setPublishReviewError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
-    fetch(
-      `/api/proposals?lane_type=surface&target_type=public_habitat_proposal,concept&proposal_role=habitat_layout,interactive_module&proposal_state=${view}`
-    )
-      .then((r) => r.json())
-      .then((d) => setProposals(d.proposals ?? []))
-      .finally(() => setLoading(false));
+    Promise.all([
+      fetch(
+        `/api/proposals?lane_type=surface&target_type=public_habitat_proposal,concept&proposal_role=habitat_layout,interactive_module&proposal_state=${view}`
+      )
+        .then((r) => r.json())
+        .then((d) => setProposals(d.proposals ?? [])),
+      fetch("/api/staging/publish-review")
+        .then(async (r) => {
+          if (!r.ok) {
+            const body = await r.json().catch(() => ({}));
+            throw new Error(body.error || `HTTP ${r.status}`);
+          }
+          return r.json();
+        })
+        .then((data) => {
+          if (data && data.review) {
+            setPublishReview({
+              significance: data.review.diff?.significance ?? "none",
+              recommendation: data.review.recommendation ?? "publish_ok_but_review",
+              advisory_flags: data.review.advisory_flags ?? {
+                likely_duplicate: false,
+                likely_reversion: false,
+                high_recent_volatility: false,
+                too_soon_since_last_public: false,
+                no_current_public: false,
+              },
+            });
+          }
+        })
+        .catch((e: unknown) => {
+          setPublishReviewError(e instanceof Error ? e.message : "Failed to load publish review");
+        }),
+    ]).finally(() => setLoading(false));
   }, [view]);
 
   const handleApprove = async (id: string, p: Proposal) => {
@@ -162,10 +201,76 @@ export function HabitatProposalList({ view }: { view: "pending_review" | "approv
   const btn = { padding: "0.5rem 0.75rem", fontSize: "0.85rem", borderRadius: 4 } as const;
 
   if (loading) return <p>Loading…</p>;
-  if (proposals.length === 0) return <p>No habitat or concept proposals in this view.</p>;
+  if (proposals.length === 0) {
+    return (
+      <>
+        {publishReview && (
+          <section style={{ border: "1px solid #ddd", borderRadius: 8, padding: "1rem", marginBottom: "1rem" }}>
+            <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Staging publish review (advisory)</h2>
+            <p style={{ fontSize: "0.85rem", color: "#555", margin: "0 0 0.5rem" }}>
+              Derived comparison between current staging habitat and the latest public snapshot for this identity. This is{" "}
+              <strong>advisory only</strong> and does not block approvals or promotion.
+            </p>
+            <p style={{ fontSize: "0.85rem", margin: "0 0 0.25rem" }}>
+              <strong>Significance:</strong> {publishReview.significance}
+            </p>
+            <p style={{ fontSize: "0.85rem", margin: "0 0 0.5rem" }}>
+              <strong>Recommendation:</strong> {publishReview.recommendation}
+            </p>
+            <ul style={{ listStyle: "none", padding: 0, margin: 0, fontSize: "0.8rem", color: "#555" }}>
+              {Object.entries(publishReview.advisory_flags)
+                .filter(([, v]) => v)
+                .map(([key]) => (
+                  <li key={key}>
+                    <strong>{key.replace(/_/g, " ")}:</strong> true
+                  </li>
+                ))}
+              {Object.values(publishReview.advisory_flags).every((v) => !v) && (
+                <li>No strong advisory flags for this staging build.</li>
+              )}
+            </ul>
+          </section>
+        )}
+        <p>No habitat or concept proposals in this view.</p>
+      </>
+    );
+  }
   return (
-    <ul style={{ listStyle: "none", padding: 0 }}>
-      {proposals.map((p) => {
+    <>
+      {publishReview && (
+        <section style={{ border: "1px solid #ddd", borderRadius: 8, padding: "1rem", marginBottom: "1rem" }}>
+          <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Staging publish review (advisory)</h2>
+          <p style={{ fontSize: "0.85rem", color: "#555", margin: "0 0 0.5rem" }}>
+            Derived comparison between the current staging habitat and the latest public snapshot for this identity. This
+            panel is <strong>advisory only</strong>; it does not change proposal state or promotion behavior.
+          </p>
+          <p style={{ fontSize: "0.85rem", margin: "0 0 0.25rem" }}>
+            <strong>Significance:</strong> {publishReview.significance}
+          </p>
+          <p style={{ fontSize: "0.85rem", margin: "0 0 0.5rem" }}>
+            <strong>Recommendation:</strong> {publishReview.recommendation}
+          </p>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, fontSize: "0.8rem", color: "#555" }}>
+            {Object.entries(publishReview.advisory_flags)
+              .filter(([, v]) => v)
+              .map(([key]) => (
+                <li key={key}>
+                  <strong>{key.replace(/_/g, " ")}:</strong> true
+                </li>
+              ))}
+            {Object.values(publishReview.advisory_flags).every((v) => !v) && (
+              <li>No strong advisory flags for this staging build.</li>
+            )}
+          </ul>
+          {publishReviewError && (
+            <p style={{ marginTop: "0.5rem", fontSize: "0.75rem", color: "#b33" }}>
+              Publish review load error (non-blocking): {publishReviewError}
+            </p>
+          )}
+        </section>
+      )}
+      <ul style={{ listStyle: "none", padding: 0 }}>
+        {proposals.map((p) => {
         const nextActions = getNextLegalProposalActions(p.proposal_state);
         const payloadInStaging = isPayloadInStaging(p.proposal_state);
         const payloadPublished = isPayloadPublished(p.proposal_state);
@@ -284,8 +389,9 @@ export function HabitatProposalList({ view }: { view: "pending_review" | "approv
             </div>
           </li>
         );
-      })}
-    </ul>
+        })}
+      </ul>
+    </>
   );
 }
 

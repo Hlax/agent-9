@@ -367,7 +367,7 @@ export default async function RuntimeDebugPage() {
               }}
             >
               <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>
-                Stage-2 trajectory adapter{" "}
+                Trajectory advisory (adapter signals){" "}
                 <span
                   style={{
                     display: "inline-block",
@@ -384,8 +384,10 @@ export default async function RuntimeDebugPage() {
                 </span>
               </h2>
               <p style={{ fontSize: "0.85rem", color: "#555", margin: "0 0 0.75rem" }}>
-                Advisory output from the trajectory feedback adapter (observability only). This output does{" "}
-                <strong>not</strong> influence any selection path. Stage-1 contract is preserved.
+                Output from the trajectory feedback adapter for the recent window. These same signals are now{" "}
+                <strong>Stage‑2 active</strong> in the runtime (they apply small nudges to{" "}
+                <code>reflection_need</code> and <code>recent_exploration_rate</code> in{" "}
+                <code>selectModeAndDrive</code>), but this panel is read‑only and operator‑facing only.
               </p>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem 1.5rem", fontSize: "0.9rem" }}>
                 <span>
