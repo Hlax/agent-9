@@ -91,5 +91,5 @@ describe("generateHabitatProposals — V1 contract", () => {
       },
     });
   });
-}
+});
 

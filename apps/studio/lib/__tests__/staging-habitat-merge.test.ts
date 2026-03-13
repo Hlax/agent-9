@@ -320,37 +320,30 @@ function buildPromoteMock({
   }));
 
   const mockIdentitySelect = vi.fn(() => ({
-    eq: vi.fn(() =>
-      Promise.resolve({
-        data: hasIdentity
-          ? {
-              identity_id: "identity-1",
-              active_avatar_artifact_id: null,
-              embodiment_direction: null,
-            }
-          : null,
-        error: null,
-      })
-    ),
-    limit: vi.fn(() => ({
+    // Supports both patterns used in staging-composition:
+    // - select("identity_id").eq("is_active", true).limit(1).maybeSingle()
+    // - select("active_avatar_artifact_id, embodiment_direction").eq("identity_id", identityId).maybeSingle()
+    eq: vi.fn(() => ({
+      limit: vi.fn(() => ({
+        maybeSingle: vi.fn(() =>
+          Promise.resolve({
+            data: hasIdentity ? { identity_id: "identity-1" } : null,
+            error: null,
+          })
+        ),
+      })),
       maybeSingle: vi.fn(() =>
         Promise.resolve({
-          data: hasIdentity ? { identity_id: "identity-1" } : null,
+          data: hasIdentity
+            ? {
+                active_avatar_artifact_id: null,
+                embodiment_direction: null,
+              }
+            : null,
           error: null,
         })
       ),
     })),
-    maybeSingle: vi.fn(() =>
-      Promise.resolve({
-        data: hasIdentity
-          ? {
-              active_avatar_artifact_id: null,
-              embodiment_direction: null,
-            }
-          : null,
-        error: null,
-      })
-    ),
   }));
 
   const mockSnapshotSelect = vi.fn(() => ({

@@ -23,6 +23,8 @@ import {
   generateHabitatProposals,
   type HabitatProposalV1,
   type HabitatProposalGenerationContext,
+  type LabHabitatProposalV1,
+  toLabHabitatProposalV1List,
 } from "./habitat-proposal";
 
 export interface SimulationInputs {
@@ -112,7 +114,7 @@ export interface SimulationResult {
   /** Structured observability trace for this simulation run. */
   trace: SimulationTrace;
   /** Structured habitat proposals (home surface) generated for this scenario. */
-  habitat_proposals: HabitatProposalV1[];
+  habitat_proposals: LabHabitatProposalV1[];
   habitat_proposal_count: number;
   habitat_proposal_types: ("update_current_focus" | "add_recent_artifact" | "add_summary_block")[];
 }
@@ -209,12 +211,6 @@ export function compareSimulationResults(
   }
 
   return { changed, unchanged };
-=======
-  /** Structured habitat proposals (home surface) generated for this scenario. */
-  habitat_proposals: HabitatProposalV1[];
-  habitat_proposal_count: number;
-  habitat_proposal_types: ("update_current_focus" | "add_recent_artifact" | "add_summary_block")[];
->>>>>>> 56462b2 (f1)
 }
 
 /** Internal: apply the same soft biases as selectModeAndDrive, but in a pure helper. */
@@ -441,16 +437,17 @@ export function simulateSessionDecision(inputs: SimulationInputs): SimulationRes
   });
 
   // Structured habitat proposals (home surface, lab-ingestible).
-  const habitat_proposals: HabitatProposalV1[] = inputs.habitatContext
+  const habitatProposalsRich: HabitatProposalV1[] = inputs.habitatContext
     ? generateHabitatProposals({
         identityId: inputs.habitatContext.identityId,
-        sessionId,
+        sessionId: null,
         milestoneArtifact: inputs.habitatContext.milestoneArtifact ?? null,
         previousFocus: inputs.habitatContext.previousFocus,
         currentFocus: inputs.habitatContext.currentFocus,
         decisionConfidence,
       })
     : [];
+  const habitat_proposals = toLabHabitatProposalV1List(habitatProposalsRich);
   const habitat_proposal_count = habitat_proposals.length;
   const habitat_proposal_types = habitat_proposals.map((p) => p.change_type);
 

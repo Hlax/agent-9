@@ -19,7 +19,6 @@ export async function getActiveIdentityId(supabase: SupabaseClient): Promise<str
     .from("identity")
     .select("identity_id")
     .eq("is_active", true)
-    .limit(1)
     .maybeSingle();
   return (data?.identity_id as string) ?? null;
 }

@@ -621,18 +621,11 @@ describe("runScenario — fixture loader", () => {
   it("runs a named fixture and returns the same result as simulateSessionDecision", () => {
     const inputs = {
       previousState: defaultCreativeState(),
-=======
-  it("generates structured habitat proposals when habitatContext is provided", () => {
-    const previousState = defaultCreativeState();
-    const result = simulateSessionDecision({
-      previousState,
->>>>>>> 56462b2 (f1)
       liveBacklog: 0,
       synthesisPressure: makeSynthesisPressure(),
       activeIntent: null,
       trajectoryAdvisory: null,
       runtimeTrajectory: makeRuntimeTrajectory({ proposal_pressure: "normal" }),
-<<<<<<< HEAD
       preferMedium: "writing" as const,
       isCron: false,
       critiqueOutcome: "continue" as const,

@@ -37,6 +37,23 @@ export interface HabitatProposalV1 {
 }
 
 /**
+ * Narrow bridge contract for lab ingestion.
+ * This intentionally strips Twin_V1-only fields (confidence, created_at, status)
+ * so that outbound payloads match the lab's strict HabitatProposalV1 schema.
+ */
+export interface LabHabitatProposalV1 {
+  proposal_id: string;
+  identity_id: string | null;
+  proposal_kind: "habitat_update";
+  target_surface: "home";
+  change_type: HabitatChangeType;
+  source_session_id: string | null;
+  source_artifact_id: string | null;
+  source_reason: string;
+  proposed_payload: Record<string, unknown>;
+}
+
+/**
  * Inputs required to deterministically generate habitat proposals.
  * Purely in-memory; does not depend on Supabase.
  */
@@ -185,5 +202,34 @@ export function generateHabitatProposals(
   }
 
   return proposals;
+}
+
+/**
+ * Convert a rich internal HabitatProposalV1 into the narrow lab bridge shape.
+ * Only the fields in the strict HabitatProposalV1 contract are preserved.
+ */
+export function toLabHabitatProposalV1(
+  proposal: HabitatProposalV1
+): LabHabitatProposalV1 {
+  return {
+    proposal_id: proposal.proposal_id,
+    identity_id: proposal.identity_id,
+    proposal_kind: proposal.proposal_kind,
+    target_surface: proposal.target_surface,
+    change_type: proposal.change_type,
+    source_session_id: proposal.source_session_id,
+    source_artifact_id: proposal.source_artifact_id,
+    source_reason: proposal.source_reason,
+    proposed_payload: proposal.proposed_payload,
+  };
+}
+
+/**
+ * Map an array of rich proposals to the strict lab-facing bridge contract.
+ */
+export function toLabHabitatProposalV1List(
+  proposals: HabitatProposalV1[]
+): LabHabitatProposalV1[] {
+  return proposals.map(toLabHabitatProposalV1);
 }
 
