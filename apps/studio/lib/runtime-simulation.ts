@@ -407,8 +407,7 @@ export function simulateSessionDecision(inputs: SimulationInputs): SimulationRes
 
   if (artifactMedium === "concept") {
     const laneInfo = classifyProposalLane({
-      requested_lane: "surface",
-      proposal_role: "habitat_layout",
+      proposal_type: "layout_change",
       target_surface: conceptTargetSurface ?? "staging_habitat",
       target_type: "concept",
     });

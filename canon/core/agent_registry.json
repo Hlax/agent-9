@@ -1,0 +1,61 @@
+{
+  "version": "1.0.0",
+  "registry_policy": {
+    "first_class_agent_rule": "A capability becomes a first-class agent only if it has durable responsibility, distinct authority, separate auditability, and explicit lifecycle value.",
+    "default_non_first_class_types": ["tool", "mode", "workflow_step", "helper_module", "subroutine"]
+  },
+  "agents": [
+    {
+      "agent_id": "agent_9",
+      "agent_name": "Agent-9",
+      "agent_role": "architecture_planner",
+      "agent_description": "Diagnoses system architecture, proposes structural changes, plans build work, and coordinates architecture evolution.",
+      "lifecycle_status": "active",
+      "authority_scopes": ["architecture_planning", "system_proposals", "agent_design", "workflow_design", "build_planning", "canon_proposals"],
+      "lane_permissions": ["build_lane", "system_lane", "canon_lane"],
+      "allowed_actions": ["create_proposal", "create_system_proposal", "create_agent_proposal", "create_canon_proposal", "create_refactor_plan", "generate_architecture_analysis", "route_to_builder_agent", "route_to_audit_agent", "update_planning_artifacts"],
+      "restricted_actions": ["promote_to_live", "override_audit_block", "modify_hard_canon_directly", "self_certify_final_promotion"],
+      "invocation_modes": ["manual_invocation", "system_goal_trigger", "proposal_chain_trigger"],
+      "configuration": { "proposal_creation_enabled": true, "auto_route_to_builder_enabled": true, "auto_route_to_audit_enabled": true }
+    },
+    {
+      "agent_id": "builder_agent",
+      "agent_name": "Builder Agent",
+      "agent_role": "implementation_engine",
+      "agent_description": "Converts accepted proposals into staged implementation artifacts.",
+      "lifecycle_status": "active",
+      "authority_scopes": ["code_generation", "patch_generation", "schema_updates", "config_updates", "staging_modification"],
+      "lane_permissions": ["build_lane"],
+      "allowed_actions": ["generate_patch", "modify_staging_files", "generate_migration", "attach_patch_metadata", "attach_rollback_notes", "respond_to_proposal_target"],
+      "restricted_actions": ["promote_to_live", "modify_governance_rules", "modify_hard_canon", "override_audit_block", "self_certify_final_promotion"],
+      "invocation_modes": ["proposal_trigger", "manual_invocation", "patch_revision_trigger"],
+      "configuration": { "staging_only": true, "rollback_notes_required": true, "audit_required_before_promotion_review": true }
+    },
+    {
+      "agent_id": "risk_audit_agent",
+      "agent_name": "Risk/Audit Agent",
+      "agent_role": "risk_auditor",
+      "agent_description": "Inspects in-progress builds and promotion candidates for risk and compliance.",
+      "lifecycle_status": "active",
+      "authority_scopes": ["risk_analysis", "architecture_validation", "governance_compliance", "promotion_audit"],
+      "lane_permissions": ["audit_lane", "promotion_lane"],
+      "allowed_actions": ["run_build_audit", "run_promotion_audit", "attach_audit_finding", "flag_severity", "recommend_revision", "block_promotion"],
+      "restricted_actions": ["promote_to_live", "modify_canon_rules", "rewrite_production_behavior", "self_activate_governance_exceptions"],
+      "invocation_modes": ["patch_generated_trigger", "promotion_ready_trigger", "manual_invocation"],
+      "configuration": { "build_audit_enabled": true, "promotion_audit_enabled": true, "can_block_promotion": true, "can_force_revision": true }
+    },
+    {
+      "agent_id": "human",
+      "agent_name": "Human Operator",
+      "agent_role": "reviewer",
+      "agent_description": "Human reviewer; may approve, reject, and promote. Not an automated agent.",
+      "lifecycle_status": "active",
+      "authority_scopes": ["promotion_approval", "governance_override", "canon_change_approval"],
+      "lane_permissions": ["build_lane", "system_lane", "canon_lane", "audit_lane", "promotion_lane"],
+      "allowed_actions": ["create_proposal", "approve_proposal", "reject_proposal", "promote_to_live", "override_audit_block"],
+      "restricted_actions": [],
+      "invocation_modes": ["manual_invocation"],
+      "configuration": {}
+    }
+  ]
+}

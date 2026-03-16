@@ -44,34 +44,26 @@ export function getLowTokenThreshold(): number {
   return Number.isFinite(n) && n >= 0 ? n : 0;
 }
 
-/** Max active (pending_review / approved_for_staging / staged) habitat_layout proposals. 0 = no cap. */
-export const DEFAULT_MAX_PENDING_HABITAT_LAYOUT = 2;
+/** Canon-native: default max pending proposals per proposal_type. 0 = no cap. */
+const DEFAULT_MAX_PENDING_BY_PROPOSAL_TYPE: Record<string, number> = {
+  layout_change: 2,
+  embodiment_change: 3,
+  integration_change: 5,
+};
 
-export function getMaxPendingHabitatLayoutProposals(): number {
-  const v = process.env.MAX_PENDING_HABITAT_LAYOUT_PROPOSALS;
-  if (v == null || v === "") return DEFAULT_MAX_PENDING_HABITAT_LAYOUT;
-  const n = parseInt(v, 10);
-  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MAX_PENDING_HABITAT_LAYOUT;
-}
-
-/** Max pending avatar_candidate proposals. 0 = no cap. */
-export const DEFAULT_MAX_PENDING_AVATAR = 3;
-
-export function getMaxPendingAvatarProposals(): number {
-  const v = process.env.MAX_PENDING_AVATAR_PROPOSALS;
-  if (v == null || v === "") return DEFAULT_MAX_PENDING_AVATAR;
-  const n = parseInt(v, 10);
-  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MAX_PENDING_AVATAR;
-}
-
-/** Max pending extension proposals (Phase 3). 0 = no cap. Canon: medium_plugin_refactor_plan.md §5.4. */
-export const DEFAULT_MAX_PENDING_EXTENSION_PROPOSALS = 5;
-
-export function getMaxPendingExtensionProposals(): number {
-  const v = process.env.MAX_PENDING_EXTENSION_PROPOSALS;
-  if (v == null || v === "") return DEFAULT_MAX_PENDING_EXTENSION_PROPOSALS;
-  const n = parseInt(v, 10);
-  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MAX_PENDING_EXTENSION_PROPOSALS;
+/**
+ * Max pending (pending_review / approved_for_staging / staged) proposals for a canon proposal_type.
+ * Env: MAX_PENDING_PROPOSALS_<proposal_type> (e.g. MAX_PENDING_PROPOSALS_layout_change). 0 = no cap.
+ */
+export function getMaxPendingProposalsByProposalType(proposalType: string): number {
+  const envKey = `MAX_PENDING_PROPOSALS_${proposalType.replace(/-/g, "_")}`;
+  const v = process.env[envKey];
+  if (v != null && v !== "") {
+    const n = parseInt(v, 10);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  const defaultCap = DEFAULT_MAX_PENDING_BY_PROPOSAL_TYPE[proposalType];
+  return defaultCap ?? 0;
 }
 
 /** Max creative_session rows allowed per rolling 1-hour window. 0 = no cap. */

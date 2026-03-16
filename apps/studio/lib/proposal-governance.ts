@@ -1,20 +1,28 @@
 /**
  * Governance V1: explicit lane/authority/transition rules for proposals.
  *
- * This module is the central place where:
- * - Proposal lanes are classified (surface | medium | system).
- * - Actor authority is modeled (runner | human | reviewer | unknown).
- * - Legal proposal state transitions are checked (including lane guards).
- * - Staging/public promotion eligibility is enforced.
- * - Lightweight governance gates run on creation/promotion.
+ * Agent-9 canon-native:
+ * - Lane classification: from canon only via classifyProposalLane({ proposal_type }). primary_lane → lane_type.
+ * - Stageability / promotion: from canon STAGEABLE_CANON_LANES (compat); no hardcoded "surface" as sole stageable lane.
+ * - Actor authority: runner → agent_9, human, reviewer → risk_audit_agent; checked against canon agent_registry.
  *
- * It intentionally returns structured results (reason_codes, metadata)
- * instead of bare booleans so callers can log/audit decisions.
+ * Single deprecated path: when proposal_type is not provided, we default to build_lane (surface) and set
+ * DEPRECATED_LEGACY_FALLBACK. Callers should pass proposal_type from canon; this fallback is temporary.
  */
 
 import { isLegalProposalStateTransition } from "./governance-rules";
+import {
+  getPrimaryLaneForProposalType,
+  isValidProposalType,
+  agentCanCreateProposalInLane,
+  canonLaneToDb,
+  dbLaneToCanon,
+  STAGEABLE_CANON_LANES,
+  type LaneType as CanonLaneType,
+  type CanonLaneId,
+} from "./canon";
 
-export type LaneType = "surface" | "medium" | "system";
+export type LaneType = CanonLaneType;
 
 export type ActorAuthority = "runner" | "human" | "reviewer" | "unknown";
 
@@ -59,15 +67,25 @@ export const GOVERNANCE_REASON_CODES = {
   INSUFFICIENT_EVIDENCE: "INSUFFICIENT_EVIDENCE",
   DUPLICATE_PRESSURE_WARNING: "DUPLICATE_PRESSURE_WARNING",
   NON_SURFACE_PROMOTION_BLOCK: "NON_SURFACE_PROMOTION_BLOCK",
+  /** proposal_type was provided but not found in canon/core/proposal_types.json */
+  PROPOSAL_TYPE_NOT_IN_CANON: "PROPOSAL_TYPE_NOT_IN_CANON",
+  /** agent_registry does not allow this agent to create proposals in this lane */
+  AGENT_NOT_ALLOWED_FOR_LANE: "AGENT_NOT_ALLOWED_FOR_LANE",
+  /** Lane is not stageable per canon (lane_map / promotion_rules). */
+  LANE_NOT_STAGEABLE: "LANE_NOT_STAGEABLE",
+  /** proposal_type not provided; used legacy fallback (deprecated). */
+  DEPRECATED_LEGACY_FALLBACK: "DEPRECATED_LEGACY_FALLBACK",
 } as const;
 
 type GovernanceReasonCode =
   (typeof GOVERNANCE_REASON_CODES)[keyof typeof GOVERNANCE_REASON_CODES];
 
 export type LaneClassificationInput = {
-  /** Proposed lane from caller (optional; used as a hint, not canon). */
+  /** Canon proposal type (e.g. system_change, schema_change). When set, lane is derived from canon primary_lane. */
+  proposal_type?: string | null;
+  /** Proposed lane from caller (optional; used as a hint when not using proposal_type). */
   requested_lane?: LaneType | null;
-  /** Domain role for this proposal (e.g. habitat_layout, avatar_candidate, medium_extension). */
+  /** Domain role for this proposal (legacy: habitat_layout, avatar_candidate, medium_extension). Used when proposal_type is not set. */
   proposal_role?: string | null;
   /** Target surface when applicable (e.g. staging_habitat, public_habitat, identity). */
   target_surface?: string | null;
@@ -77,104 +95,107 @@ export type LaneClassificationInput = {
 
 export type LaneClassification = {
   lane_type: LaneType;
+  /** Canon lane_id when classification was from canon (e.g. build_lane). */
+  canon_lane_id?: string | null;
   proposal_role: string | null;
   target_surface: string | null;
   classification_reason: string;
   reason_codes: GovernanceReasonCode[];
 };
 
+/** When true, allow legacy classification when proposal_type is missing. When false, fallback path is disabled. */
+function allowLegacyLaneFallback(): boolean {
+  const v = process.env.ALLOW_LEGACY_PROPOSAL_LANE_FALLBACK;
+  return v === "1" || v === "true" || v === "yes";
+}
+
+/** Instrumentation: log when deprecated fallback is used (for migration monitoring). */
+function logLegacyFallbackHit(input: LaneClassificationInput, reason: string): void {
+  try {
+    if (typeof process !== "undefined" && process.env.NODE_ENV !== "test") {
+      console.warn("[proposal-governance] DEPRECATED_LEGACY_FALLBACK hit", {
+        reason,
+        has_proposal_type: Boolean((input.proposal_type ?? "").trim()),
+        requested_lane: input.requested_lane ?? null,
+      });
+    }
+  } catch {
+    // no-op if console or env unavailable
+  }
+}
+
 /**
- * Canonical lane classification. Centralizes lane decisions so that:
- * - surface: user-facing presentation / habitat / avatar / layout.
- * - medium: capability/extension/medium expansion.
- * - system: runtime/governance/architecture/process.
- *
- * Caller still owns the proposal_role semantics; this function only interprets
- * them through governance canon.
+ * Canonical lane classification. Canon is source of truth.
+ * - When proposal_type is provided and valid in canon: lane = proposal_types[].primary_lane, mapped to DB LaneType.
+ * - When proposal_type is missing: only allowed if ALLOW_LEGACY_PROPOSAL_LANE_FALLBACK is set; otherwise same as invalid (build_lane + DEPRECATED_LEGACY_FALLBACK). Instrumentation logs fallback hits.
  */
 export function classifyProposalLane(input: LaneClassificationInput): LaneClassification {
   const role = (input.proposal_role ?? "").trim() || null;
   const targetSurface = (input.target_surface ?? "").trim() || null;
   const requested = input.requested_lane ?? null;
+  const proposalType = (input.proposal_type ?? "").trim() || null;
 
-  // Explicit system roles always win; system classification overrides hints.
-  const systemRoles = new Set<string>([
-    "system_proposal",
-    "governance_change",
-    "runtime_change",
-    "architecture_change",
-    "policy_change",
-  ]);
-  if (role && systemRoles.has(role)) {
-    return {
-      lane_type: "system",
-      proposal_role: role,
-      target_surface: targetSurface,
-      classification_reason: "Role indicates governance/runtime/architecture concern; classified as system lane.",
-      reason_codes: [],
-    };
-  }
-
-  // Extension / capability roles → medium lane.
-  const mediumRoles = new Set<string>([
-    "medium_extension",
-    "toolchain_extension",
-    "workflow_extension",
-    "surface_environment_extension",
-    "system_capability_extension",
-    "extension",
-  ]);
-  if (role && mediumRoles.has(role)) {
-    return {
-      lane_type: "medium",
-      proposal_role: role,
-      target_surface: targetSurface,
-      classification_reason: "Role indicates capability/extension work; classified as medium lane.",
-      reason_codes: [],
-    };
-  }
-
-  // Habitat / avatar / other user-facing surfaces → surface lane.
-  const surfaceRoles = new Set<string>([
-    "habitat_layout",
-    "layout_concept",
-    "surface_proposal",
-    "avatar_candidate",
-    "interactive_module",
-  ]);
-  if (
-    role && surfaceRoles.has(role) ||
-    (targetSurface && ["staging_habitat", "public_habitat", "identity"].includes(targetSurface))
-  ) {
+  if (proposalType) {
+    const primaryLane = getPrimaryLaneForProposalType(proposalType);
+    if (primaryLane != null) {
+      const lane_type = canonLaneToDb(primaryLane);
+      return {
+        lane_type,
+        canon_lane_id: primaryLane,
+        proposal_role: role ?? proposalType,
+        target_surface: targetSurface,
+        classification_reason: `Lane from canon: proposal_type=${proposalType} → primary_lane=${primaryLane}.`,
+        reason_codes: [],
+      };
+    }
+    const reason_codes: GovernanceReasonCode[] = [GOVERNANCE_REASON_CODES.PROPOSAL_TYPE_NOT_IN_CANON];
     return {
       lane_type: "surface",
-      proposal_role: role,
+      canon_lane_id: null,
+      proposal_role: role ?? proposalType,
       target_surface: targetSurface,
-      classification_reason:
-        "Role/target_surface indicate user-facing presentation or identity; classified as surface lane.",
-      reason_codes: [],
+      classification_reason: `proposal_type '${proposalType}' not in canon; defaulting to surface.`,
+      reason_codes,
     };
   }
 
-  // Fallback: honor a requested lane when present, else default to surface.
+  // Deprecated fallback: only when env ALLOW_LEGACY_PROPOSAL_LANE_FALLBACK is set. Instrumentation logs every hit.
+  if (!allowLegacyLaneFallback()) {
+    logLegacyFallbackHit(input, "fallback_disabled_no_proposal_type");
+  }
+
   if (requested) {
+    if (allowLegacyLaneFallback()) {
+      logLegacyFallbackHit(input, "requested_lane_used");
+    }
     return {
       lane_type: requested,
       proposal_role: role,
       target_surface: targetSurface,
-      classification_reason: "Lane inferred from caller hint (requested_lane); no conflicting canon signals.",
-      reason_codes: [],
+      classification_reason: "Lane from caller requested_lane (deprecated: prefer proposal_type).",
+      reason_codes: [GOVERNANCE_REASON_CODES.DEPRECATED_LEGACY_FALLBACK],
     };
   }
 
+  if (allowLegacyLaneFallback()) {
+    logLegacyFallbackHit(input, "default_build_lane");
+  }
   return {
     lane_type: "surface",
+    canon_lane_id: "build_lane",
     proposal_role: role,
     target_surface: targetSurface,
     classification_reason:
-      "No explicit lane hint; defaulting to surface per artifact-first rule (user-facing proposals are surface unless marked otherwise).",
-    reason_codes: [],
+      "No proposal_type provided; defaulting to build_lane (surface). Deprecated: callers should pass proposal_type from canon.",
+    reason_codes: [GOVERNANCE_REASON_CODES.DEPRECATED_LEGACY_FALLBACK],
   };
+}
+
+/**
+ * Validate proposal_type against canon. Returns true if it exists in proposal_types.json.
+ */
+export function validateProposalType(proposalType: string): boolean {
+  return isValidProposalType(proposalType);
 }
 
 /** Simple helper for sites that need to tag actor authority explicitly. */
@@ -187,14 +208,52 @@ export function getProposalAuthority(
   return "unknown";
 }
 
+/** Map ActorAuthority to canon agent_id for agent_registry lookups. */
+export function getAgentIdForAuthority(actor: ActorAuthority): string {
+  if (actor === "runner") return "agent_9";
+  if (actor === "human") return "human";
+  if (actor === "reviewer") return "risk_audit_agent";
+  return "unknown";
+}
+
+/**
+ * Check whether the actor may create a proposal in the given lane.
+ * Authority is resolved from canon/core/agent_registry.json (lane_permissions, allowed_actions, restricted_actions).
+ * Human always allowed. Unknown agent blocks.
+ */
 export function canCreateProposal(
   lane: LaneType,
   actor: ActorAuthority
 ): GovernanceResult {
   const reason_codes: GovernanceReasonCode[] = [];
 
-  if (lane === "system" && actor === "runner") {
-    reason_codes.push(GOVERNANCE_REASON_CODES.RUNNER_SYSTEM_PROPOSAL_FORBIDDEN);
+  if (actor === "human") {
+    return {
+      ok: true,
+      decision: "allow",
+      reason_codes,
+      lane_type: lane,
+      actor_authority: actor,
+    };
+  }
+
+  const agentId = getAgentIdForAuthority(actor);
+  if (agentId === "unknown") {
+    reason_codes.push(GOVERNANCE_REASON_CODES.AGENT_NOT_ALLOWED_FOR_LANE);
+    return {
+      ok: false,
+      decision: "block",
+      reason_codes,
+      lane_type: lane,
+      actor_authority: actor,
+      metadata: { message: "Unknown actor; cannot resolve agent_registry entry." },
+    };
+  }
+
+  const canonLaneId = dbLaneToCanon(lane);
+  const allowed = agentCanCreateProposalInLane(agentId, canonLaneId);
+  if (!allowed) {
+    reason_codes.push(GOVERNANCE_REASON_CODES.AGENT_NOT_ALLOWED_FOR_LANE);
     return {
       ok: false,
       decision: "block",
@@ -202,7 +261,9 @@ export function canCreateProposal(
       lane_type: lane,
       actor_authority: actor,
       metadata: {
-        message: "Runner may not create system proposals; human/operator must initiate.",
+        message: `Agent ${agentId} may not create proposals in lane ${canonLaneId} per agent_registry.`,
+        agent_id: agentId,
+        canon_lane_id: canonLaneId,
       },
     };
   }
@@ -248,19 +309,21 @@ export function canTransitionProposalState(input: TransitionCheckInput): Governa
     };
   }
 
-  // Surface-only promotion states.
-  const isSurfaceOnlyTarget =
+  // Stageability from canon: only lanes in STAGEABLE_CANON_LANES may transition to staging/public.
+  const canonLaneId = dbLaneToCanon(lane_type) as CanonLaneId;
+  const isStageableLane = STAGEABLE_CANON_LANES.includes(canonLaneId);
+  const isPromotionTarget =
     target_state === "approved_for_staging" ||
     target_state === "staged" ||
     target_state === "approved_for_publication" ||
     target_state === "published";
 
-  if (isSurfaceOnlyTarget && lane_type !== "surface") {
+  if (isPromotionTarget && !isStageableLane) {
     const code =
       target_state === "approved_for_staging" || target_state === "staged"
         ? GOVERNANCE_REASON_CODES.NON_SURFACE_STAGING_FORBIDDEN
         : GOVERNANCE_REASON_CODES.NON_SURFACE_PUBLIC_PROMOTION_FORBIDDEN;
-    reason_codes.push(code);
+    reason_codes.push(code, GOVERNANCE_REASON_CODES.LANE_NOT_STAGEABLE);
     return {
       ok: false,
       decision: "block",
@@ -270,6 +333,7 @@ export function canTransitionProposalState(input: TransitionCheckInput): Governa
       metadata: {
         current_state,
         target_state,
+        canon_lane_id: canonLaneId,
       },
     };
   }
@@ -304,24 +368,26 @@ export function canRollbackProposalState(input: TransitionCheckInput): Governanc
   const reason_codes: GovernanceReasonCode[] = [];
 
   // Surface-only constraint is preserved for privileged rollback too.
-  const isSurfaceOnlyTarget =
+  const canonLaneId = dbLaneToCanon(lane_type) as CanonLaneId;
+  const isStageableLane = STAGEABLE_CANON_LANES.includes(canonLaneId);
+  const isRollbackToStaging =
     target_state === "approved_for_staging" ||
     target_state === "staged" ||
     target_state === "approved_for_publication" ||
     target_state === "published";
-  if (isSurfaceOnlyTarget && lane_type !== "surface") {
+  if (isRollbackToStaging && !isStageableLane) {
     const code =
       target_state === "approved_for_staging" || target_state === "staged"
         ? GOVERNANCE_REASON_CODES.NON_SURFACE_STAGING_FORBIDDEN
         : GOVERNANCE_REASON_CODES.NON_SURFACE_PUBLIC_PROMOTION_FORBIDDEN;
-    reason_codes.push(code);
+    reason_codes.push(code, GOVERNANCE_REASON_CODES.LANE_NOT_STAGEABLE);
     return {
       ok: false,
       decision: "block",
       reason_codes,
       lane_type,
       actor_authority,
-      metadata: { current_state, target_state, rollback: true },
+      metadata: { current_state, target_state, rollback: true, canon_lane_id: canonLaneId },
     };
   }
 
@@ -427,22 +493,23 @@ export function evaluateGovernanceGate(input: GovernanceGateInput): GovernanceRe
   const reason_codes: GovernanceReasonCode[] = [];
   let decision: GovernanceDecision = "allow";
 
-  // Non-surface promotion to staging/public is hard-blocked here as well,
-  // but canTransitionProposalState is the authoritative lane/state guard.
+  // Promotion to staging/public: only canon stageable lanes allowed (canTransitionProposalState is authoritative).
+  const canonLaneId = dbLaneToCanon(lane_type) as CanonLaneId;
+  const isStageableLane = STAGEABLE_CANON_LANES.includes(canonLaneId);
   const isPromotionTarget =
     target_state === "approved_for_staging" ||
     target_state === "staged" ||
     target_state === "approved_for_publication" ||
     target_state === "published";
-  if (isPromotionTarget && lane_type !== "surface") {
-    reason_codes.push(GOVERNANCE_REASON_CODES.NON_SURFACE_PROMOTION_BLOCK);
+  if (isPromotionTarget && !isStageableLane) {
+    reason_codes.push(GOVERNANCE_REASON_CODES.NON_SURFACE_PROMOTION_BLOCK, GOVERNANCE_REASON_CODES.LANE_NOT_STAGEABLE);
     return {
       ok: false,
       decision: "block",
       reason_codes,
       lane_type,
       actor_authority,
-      metadata: { current_state, target_state, proposal_role },
+      metadata: { current_state, target_state, proposal_role, canon_lane_id: canonLaneId },
     };
   }
 

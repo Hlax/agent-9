@@ -6,12 +6,12 @@ import {
   classifyProposalLane,
   canCreateProposal,
   getProposalAuthority,
-  type LaneType,
+  validateProposalType,
 } from "@/lib/proposal-governance";
 
 /**
- * POST /api/artifacts/[id]/create-proposal — create a surface/system proposal from this concept artifact (Harvey override).
- * Body (optional): { lane_type?, target_surface?, proposal_type?, habitat_payload? }.
+ * POST /api/artifacts/[id]/create-proposal — create a proposal from this concept artifact (canon-native).
+ * Body: proposal_type (required, must be in canon), target_surface?, habitat_payload?.
  * When target_surface is public_habitat, habitat_payload is validated and stored as habitat_payload_json.
  */
 export async function POST(
@@ -39,18 +39,26 @@ export async function POST(
     }
 
     const body = await request.json().catch(() => ({}));
-    const requestedLane = (body?.lane_type ?? "surface") as LaneType;
     const target_surface = typeof body?.target_surface === "string" ? body.target_surface : "staging_habitat";
-    const proposal_type = typeof body?.proposal_type === "string" ? body.proposal_type : "layout";
-    const proposal_role =
-      typeof body?.proposal_role === "string" && body.proposal_role.trim()
-        ? body.proposal_role.trim()
-        : "habitat_layout";
+    const raw_proposal_type = typeof body?.proposal_type === "string" ? body.proposal_type.trim() : null;
 
-    // Governance V1: canonical lane classification for artifact-derived proposals.
+    if (!raw_proposal_type) {
+      return NextResponse.json(
+        { error: "proposal_type is required (canon type, e.g. layout_change). Use a type from canon/core/proposal_types.json." },
+        { status: 400 }
+      );
+    }
+    if (!validateProposalType(raw_proposal_type)) {
+      return NextResponse.json(
+        { error: `proposal_type '${raw_proposal_type}' is not in canon. Use a type from canon/core/proposal_types.json.` },
+        { status: 400 }
+      );
+    }
+    const proposal_type = raw_proposal_type;
+
+    // Canon-native: classify from proposal_type only.
     const classification = classifyProposalLane({
-      requested_lane: requestedLane,
-      proposal_role,
+      proposal_type,
       target_surface,
       target_type: "concept",
     });
@@ -92,7 +100,7 @@ export async function POST(
       proposal_state: "pending_review",
       target_surface,
       proposal_type,
-      proposal_role,
+      proposal_role: classification.proposal_role ?? proposal_type,
       habitat_payload_json,
       preview_uri: null,
       review_note: null,

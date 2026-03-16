@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
+import { STAGEABLE_CANON_LANES, canonLaneToDb } from "@/lib/canon";
 import { computeStyleProfile, evaluateProposalStyle, type StyleAnalysisInput } from "@/lib/style-profile";
 import { evaluateProposalRelationship, type ProposalForRelationship } from "@/lib/proposal-relationship";
 import { buildConceptFamilies } from "@/lib/proposal-families";
 
+/** Stageable lanes from canon only (no lane_type === "surface" literal). */
+const STAGEABLE_DB_LANE_TYPES = [...new Set(STAGEABLE_CANON_LANES.map((id) => canonLaneToDb(id)))];
+
 /**
- * GET /api/staging/proposals — proposals for staging habitat (approved_for_staging, staged).
- * No auth required so habitat-staging app can load from Studio API (same-origin or NEXT_PUBLIC_STUDIO_URL).
- * In production you may restrict by network or add a shared secret.
+ * GET /api/staging/proposals — proposals for staging (approved_for_staging, staged, etc.).
+ * Filter by canon stageable lanes only. No auth required so habitat-staging app can load from Studio API.
  */
 export async function GET() {
   try {
@@ -17,7 +20,7 @@ export async function GET() {
     const { data, error } = await supabase
       .from("proposal_record")
       .select("proposal_record_id, lane_type, target_type, proposal_role, title, summary, proposal_state, target_surface, proposal_type, preview_uri, artifact_id, habitat_payload_json, created_at, updated_at")
-      .eq("lane_type", "surface")
+      .in("lane_type", STAGEABLE_DB_LANE_TYPES)
       .in("proposal_state", ["approved_for_staging", "staged", "approved_for_publication", "published"])
       .order("created_at", { ascending: false })
       .limit(50);

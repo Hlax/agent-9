@@ -1,0 +1,12 @@
+{
+  "version": "1.0.0",
+  "block_conditions": [
+    { "block_id": "hard_canon_violation", "description": "The proposal or patch violates enforceable hard canon." },
+    { "block_id": "authority_escalation_without_approval", "description": "An agent attempts to increase authority scope or permissions without required governance approval." },
+    { "block_id": "patch_exceeds_proposal_scope", "description": "Generated patch changes exceed the approved or declared proposal target scope." },
+    { "block_id": "missing_rollback_notes", "description": "A material patch does not include rollback instructions." },
+    { "block_id": "unresolved_severe_audit_finding", "description": "A severe or critical audit finding remains unresolved." },
+    { "block_id": "invalid_lane_transition", "description": "The proposal, patch, or package attempts an invalid governance lane transition." },
+    { "block_id": "promotion_attempt_without_final_audit", "description": "Promotion is attempted without a completed promotion audit." }
+  ]
+}

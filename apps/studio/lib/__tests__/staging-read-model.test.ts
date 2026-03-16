@@ -6,10 +6,7 @@ import {
 } from "../staging-read-model";
 
 describe("staging-read-model", () => {
-  it("classifies lane buckets based on lane_type and role/target", () => {
-    expect(
-      classifyLaneBucket({ lane_type: "artifact", proposal_role: null, target_type: null })
-    ).toBe("artifacts");
+  it("classifies lane buckets from canon lane_id and role/target (DB lane_type: surface | medium | system)", () => {
     expect(
       classifyLaneBucket({ lane_type: "system", proposal_role: null, target_type: null })
     ).toBe("system");
@@ -33,6 +30,10 @@ describe("staging-read-model", () => {
         proposal_role: "habitat_layout",
         target_type: "surface",
       })
+    ).toBe("habitat");
+    // Unknown lane_type maps to build_lane → habitat when no role/target match
+    expect(
+      classifyLaneBucket({ lane_type: "artifact", proposal_role: null, target_type: null })
     ).toBe("habitat");
   });
 
@@ -93,16 +94,16 @@ describe("staging-read-model", () => {
     expect(group.proposals.map((p) => p.id).sort()).toEqual(["p1", "p2"]);
   });
 
-  it("places proposals into non-habitat buckets when appropriate", () => {
+  it("places proposals into legacy buckets when appropriate (canon lane_id + role/target)", () => {
     const proposals: RawStagingProposal[] = [
       {
         proposal_record_id: "a1",
-        lane_type: "artifact",
-        target_type: "artifact",
-        target_surface: null,
-        proposal_role: "artifact_publishing",
-        proposal_type: "publishing",
-        title: "Publish artifact",
+        lane_type: "surface",
+        target_type: "concept",
+        target_surface: "staging_habitat",
+        proposal_role: "layout_change",
+        proposal_type: "layout_change",
+        title: "Layout",
         summary: null,
         proposal_state: "approved_for_staging",
         review_note: null,
@@ -151,7 +152,7 @@ describe("staging-read-model", () => {
     const pages: RawStagingPage[] = [];
 
     const model = buildStagingBuckets(proposals, pages);
-    expect(model.buckets.artifacts.proposals.map((p) => p.id)).toEqual(["a1"]);
+    expect(model.buckets.habitat.groups.flatMap((g) => g.proposals.map((p) => p.id))).toContain("a1");
     expect(model.buckets.critiques.proposals.map((p) => p.id)).toEqual(["c1"]);
     expect(model.buckets.system.proposals.map((p) => p.id)).toEqual(["s1"]);
   });

@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServer } from "@/lib/supabase-server";
 import {
-  buildStagingBuckets,
-  type RawStagingPage,
+  getStagingReviewModel,
   type RawStagingProposal,
 } from "@/lib/staging-read-model";
 import {
@@ -10,8 +9,6 @@ import {
   getProposalAuthority,
   type LaneType,
 } from "@/lib/proposal-governance";
-
-const TERMINAL_STATES = ["archived", "rejected", "ignored", "published"] as const;
 
 const ACTIONS: { key: string; target_state: string }[] = [
   { key: "approve_for_staging", target_state: "approved_for_staging" },
@@ -26,6 +23,8 @@ export async function GET() {
     const supabase = getSupabaseServer();
     if (!supabase) {
       return NextResponse.json({
+        lanes: {},
+        totals: { proposals: 0, byLane: {}, habitatGroups: 0, artifacts: 0, critiques: 0, extensions: 0, system: 0 },
         buckets: {
           habitat: { groups: [] },
           artifacts: { proposals: [] },
@@ -33,79 +32,65 @@ export async function GET() {
           extensions: { proposals: [] },
           system: { proposals: [] },
         },
-        totals: {
-          proposals: 0,
-          habitatGroups: 0,
-          artifacts: 0,
-          critiques: 0,
-          extensions: 0,
-          system: 0,
-        },
       });
     }
 
-    const [proposalRes, pageRes] = await Promise.all([
-      supabase
-        .from("proposal_record")
-        .select(
-          "proposal_record_id, lane_type, target_type, target_surface, proposal_role, proposal_type, title, summary, proposal_state, review_note, habitat_payload_json, artifact_id, created_at, updated_at"
-        )
-        .not("proposal_state", "in", TERMINAL_STATES as unknown as string[])
-        .order("created_at", { ascending: false })
-        .limit(200),
-      supabase
-        .from("staging_habitat_content")
-        .select("slug, title, payload_json, source_proposal_id, updated_at"),
-    ]);
-
-    if (proposalRes.error) {
-      return NextResponse.json(
-        { error: proposalRes.error.message },
-        { status: 500 }
-      );
-    }
-
-    if (pageRes.error) {
-      return NextResponse.json(
-        { error: pageRes.error.message },
-        { status: 500 }
-      );
-    }
-
-    const proposalsRaw = (proposalRes.data ?? []) as RawStagingProposal[];
-    const pages = (pageRes.data ?? []) as RawStagingPage[];
-
+    const model = await getStagingReviewModel(supabase);
     const authority = getProposalAuthority("reviewer");
 
-    const proposalsWithActions: RawStagingProposal[] = proposalsRaw.map((p) => {
-      const lane = ((p.lane_type as string | null) ?? "surface") as LaneType;
+    const addActions = (lane_type: string | null, proposal_state: string): string[] => {
+      const lane = (lane_type ?? "surface") as LaneType;
       const allowed: string[] = [];
       for (const action of ACTIONS) {
         const check = canTransitionProposalState({
-          current_state: p.proposal_state as string,
+          current_state: proposal_state,
           target_state: action.target_state,
           lane_type: lane,
           actor_authority: authority,
         });
-        if (check.ok) {
-          allowed.push(action.key);
+        if (check.ok) allowed.push(action.key);
+      }
+      return allowed;
+    };
+
+    for (const laneId of Object.keys(model.lanes)) {
+      const laneData = model.lanes[laneId];
+      if (laneData?.proposals) {
+        laneData.proposals = laneData.proposals.map((v) => ({
+          ...v,
+          allowed_actions: addActions(v.lane_type, v.proposal_state),
+        }));
+      }
+      if (laneData?.groups) {
+        for (const g of laneData.groups) {
+          g.proposals = g.proposals.map((v) => ({
+            ...v,
+            allowed_actions: addActions(v.lane_type, v.proposal_state),
+          }));
         }
       }
-      return {
-        ...p,
-        allowed_actions: allowed,
-      };
-    });
-
-    const model = buildStagingBuckets(proposalsWithActions, pages);
+    }
+    for (const key of ["habitat", "artifacts", "critiques", "extensions", "system"] as const) {
+      const bucket = model.buckets[key];
+      if ("groups" in bucket && bucket.groups) {
+        for (const g of bucket.groups) {
+          g.proposals = g.proposals.map((v) => ({
+            ...v,
+            allowed_actions: addActions(v.lane_type, v.proposal_state),
+          }));
+        }
+      } else if ("proposals" in bucket && bucket.proposals) {
+        bucket.proposals = bucket.proposals.map((v) => ({
+          ...v,
+          allowed_actions: addActions(v.lane_type, v.proposal_state),
+        }));
+      }
+    }
 
     return NextResponse.json(model);
   } catch (e) {
     return NextResponse.json(
-      {
-        error:
-          e instanceof Error ? e.message : "Failed to load staging review model.",
-      },
+      { error: e instanceof Error ? e.message : "Failed to load staging review model." },
       { status: 500 }
     );
   }

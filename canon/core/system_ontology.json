@@ -1,0 +1,21 @@
+{
+  "version": "1.0.0",
+  "system_name": "Agent-9 Architecture Builder System",
+  "description": "Governance-aware architecture builder platform for proposing, generating, auditing, and promoting system changes.",
+  "object_types": [
+    { "key": "agent", "label": "Agent", "description": "A governed system actor with explicit role, authority, permissions, and lifecycle." },
+    { "key": "proposal", "label": "Proposal", "description": "A structured request to create, modify, remove, or govern a system element." },
+    { "key": "patch", "label": "Patch", "description": "A staged implementation artifact derived from a proposal." },
+    { "key": "snapshot", "label": "Snapshot", "description": "An immutable state record created after promotion." },
+    { "key": "audit_finding", "label": "Audit Finding", "description": "A structured risk, compliance, or architecture finding attached to a patch or promotion package." },
+    { "key": "canon_rule", "label": "Canon Rule", "description": "A governing rule that constrains or guides system behavior." }
+  ],
+  "principles": [
+    "Proposals represent intent.",
+    "Patches represent staged implementation.",
+    "Snapshots represent accepted state.",
+    "Promotion to live requires human approval.",
+    "Hard canon is machine-readable and enforceable.",
+    "First-class agents must remain few and justified."
+  ]
+}

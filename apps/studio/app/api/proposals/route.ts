@@ -6,12 +6,13 @@ import {
   classifyProposalLane,
   canCreateProposal,
   getProposalAuthority,
+  validateProposalType,
   type LaneType,
 } from "@/lib/proposal-governance";
 
 /**
- * GET /api/proposals — list proposals. Query: lane_type, target_type.
- * POST /api/proposals — create a proposal (Twin or Harvey). Body: lane_type, target_type, title, summary?, target_id?, preview_uri?, created_by?.
+ * GET /api/proposals — list proposals. Query: lane_type, lane_id (canon), target_type, proposal_type, proposal_state, proposal_role.
+ * POST /api/proposals — create a proposal. Body: proposal_type (canon, preferred), title, summary?, target_type?, target_surface?, artifact_id?, preview_uri?, created_by?.
  */
 export async function GET(request: Request) {
   try {
@@ -21,11 +22,24 @@ export async function GET(request: Request) {
     if (!supabase) return NextResponse.json({ proposals: [] });
     const { searchParams } = new URL(request.url);
     const lane_type = searchParams.get("lane_type");
+    const lane_id = searchParams.get("lane_id");
     const target_type = searchParams.get("target_type");
+    const proposal_type = searchParams.get("proposal_type");
     const proposal_state = searchParams.get("proposal_state");
     const proposal_role = searchParams.get("proposal_role");
     let query = supabase.from("proposal_record").select("*").order("created_at", { ascending: false }).limit(50);
-    if (lane_type) query = query.eq("lane_type", lane_type);
+    if (lane_id) {
+      const { canonLaneToDb } = await import("@/lib/canon");
+      const dbType = canonLaneToDb(lane_id);
+      query = query.eq("lane_type", dbType);
+    } else if (lane_type) {
+      query = query.eq("lane_type", lane_type);
+    }
+    if (proposal_type) {
+      const types = proposal_type.split(",").map((t) => t.trim()).filter(Boolean);
+      if (types.length > 1) query = query.in("proposal_type", types);
+      else if (types.length === 1) query = query.eq("proposal_type", types[0]);
+    }
     if (target_type) {
       const types = target_type.split(",").map((t) => t.trim()).filter(Boolean);
       if (types.length > 1) query = query.in("target_type", types);
@@ -68,14 +82,28 @@ export async function POST(request: Request) {
     const target_id = body?.target_id ?? null;
     const artifact_id = body?.artifact_id ?? null;
     const target_surface = typeof body?.target_surface === "string" ? body.target_surface : null;
-    const proposal_type = typeof body?.proposal_type === "string" ? body.proposal_type : null;
+    const proposal_type = typeof body?.proposal_type === "string" ? body.proposal_type.trim() || null : null;
     const proposal_role = typeof body?.proposal_role === "string" ? body.proposal_role : null;
     const preview_uri = body?.preview_uri ?? null;
     const created_by = body?.created_by ?? (user?.email ?? "harvey");
     if (!title) return NextResponse.json({ error: "title is required" }, { status: 400 });
 
-    // Governance V1: classify lane and enforce create authority for human callers.
+    // Agent-9: proposal_type required; must be valid in canon.
+    if (!proposal_type) {
+      return NextResponse.json(
+        { error: "proposal_type is required (canon proposal type, e.g. layout_change, embodiment_change, integration_change)." },
+        { status: 400 }
+      );
+    }
+    if (!validateProposalType(proposal_type)) {
+      return NextResponse.json(
+        { error: `proposal_type '${proposal_type}' is not in canon. Use a type from canon/core/proposal_types.json.` },
+        { status: 400 }
+      );
+    }
+
     const classification = classifyProposalLane({
+      proposal_type,
       requested_lane: requestedLane ?? undefined,
       proposal_role,
       target_surface,
@@ -110,8 +138,8 @@ export async function POST(request: Request) {
     };
     if (artifact_id != null) row.artifact_id = artifact_id;
     if (target_surface != null) row.target_surface = target_surface;
-    if (proposal_type != null) row.proposal_type = proposal_type;
-    if (proposal_role != null) row.proposal_role = proposal_role;
+    row.proposal_type = proposal_type;
+    row.proposal_role = proposal_role ?? classification.proposal_role ?? proposal_type;
     const { data, error } = await supabase
       .from("proposal_record")
       .insert(row)

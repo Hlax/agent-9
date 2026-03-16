@@ -277,9 +277,10 @@ export async function POST(request: Request) {
           const rationale = (nameProposalMatch[2] ?? "").trim() || null;
           replyContent = replyContent.replace(nameProposalRe, "").trim();
 
+          // Canon-native: name proposals use embodiment_change (identity/avatar) and explicit proposal_type.
+          const proposalType = "embodiment_change";
           const classification = classifyProposalLane({
-            requested_lane: "surface",
-            proposal_role: "identity_name",
+            proposal_type: proposalType,
             target_surface: "identity",
             target_type: "identity_name",
           });
@@ -288,8 +289,11 @@ export async function POST(request: Request) {
           if (createCheck.ok) {
             await supabase.from("proposal_record").insert({
               lane_type: classification.lane_type,
+              proposal_type: proposalType,
+              proposal_role: proposalType,
               target_type: "identity_name",
               target_id: null,
+              target_surface: "identity",
               title: proposedName,
               summary: rationale,
               proposal_state: "pending_review",

@@ -1,0 +1,11 @@
+{
+  "version": "1.0.0",
+  "rules": [
+    { "rule_id": "few_first_class_agents", "category": "agent_governance", "description": "Only capabilities with durable responsibility, distinct authority, separate auditability, and lifecycle value may become first-class agents." },
+    { "rule_id": "separation_of_roles", "category": "authority_separation", "description": "No single first-class agent may originate proposal intent, generate implementation, perform final audit, and promote the same change." },
+    { "rule_id": "human_only_promotion", "category": "promotion_governance", "description": "Promotion to live always requires explicit human approval." },
+    { "rule_id": "no_direct_hard_canon_mutation", "category": "canon_governance", "description": "Hard canon may not be modified outside the defined governance path." },
+    { "rule_id": "audit_required_for_material_patch", "category": "audit_governance", "description": "Every material patch must complete in-progress audit before promotion review." },
+    { "rule_id": "rollback_required_for_material_patch", "category": "patch_governance", "description": "Every material patch must include rollback notes." }
+  ]
+}

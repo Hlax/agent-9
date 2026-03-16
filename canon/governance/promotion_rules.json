@@ -1,0 +1,18 @@
+{
+  "version": "1.0.0",
+  "promotion_requirements": [
+    "proposal_ready_for_promotion_review",
+    "patch_ready_for_promotion_review",
+    "promotion_audit_completed",
+    "no_unresolved_blocking_finding",
+    "rollback_notes_present",
+    "lineage_links_present",
+    "human_approval_recorded"
+  ],
+  "promotion_defaults": {
+    "human_approval_required": true,
+    "risk_audit_may_block": true,
+    "builder_may_not_promote": true,
+    "agent_9_may_not_promote": true
+  }
+}

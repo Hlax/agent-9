@@ -8,21 +8,21 @@ import {
   type LaneType,
 } from "../proposal-governance";
 
-describe("Governance V1: API-facing classification helpers", () => {
-  it("/api/proposals POST-style body classifies via governance (surface habitat)", () => {
+describe("Governance V1: API-facing classification helpers (canon proposal_type only)", () => {
+  it("/api/proposals POST-style body classifies via canon proposal_type (layout_change → build_lane)", () => {
     const lane = classifyProposalLane({
-      requested_lane: "surface",
-      proposal_role: "habitat_layout",
+      proposal_type: "layout_change",
       target_surface: "staging_habitat",
       target_type: "concept",
     });
     expect(lane.lane_type).toBe("surface");
+    expect(lane.canon_lane_id).toBe("build_lane");
+    expect(lane.reason_codes).toEqual([]);
   });
 
-  it("/api/proposals POST-style body supports system lane for human callers", () => {
+  it("/api/proposals POST-style body supports system lane via proposal_type", () => {
     const lane = classifyProposalLane({
-      requested_lane: "system",
-      proposal_role: "system_proposal",
+      proposal_type: "new_agent",
       target_surface: null,
       target_type: "governance_change",
     });
@@ -32,26 +32,26 @@ describe("Governance V1: API-facing classification helpers", () => {
     expect(res.ok).toBe(true);
   });
 
-  it("artifact create-proposal route style classification prefers governance mapping", () => {
+  it("artifact create-proposal uses canon proposal_type (layout_change)", () => {
     const lane = classifyProposalLane({
-      requested_lane: "surface",
-      proposal_role: "interactive_module",
+      proposal_type: "layout_change",
       target_surface: "staging_habitat",
       target_type: "concept",
     });
     expect(lane.lane_type).toBe("surface");
+    expect(lane.canon_lane_id).toBe("build_lane");
   });
 
-  it("chat name proposals resolve to surface lane through governance classification", () => {
+  it("chat name proposals use embodiment_change and resolve to build_lane", () => {
     const lane = classifyProposalLane({
-      requested_lane: "surface",
-      proposal_role: "identity_name",
+      proposal_type: "embodiment_change",
       target_surface: "identity",
       target_type: "identity_name",
     });
     const authority = getProposalAuthority("http_user");
     const res = canCreateProposal(lane.lane_type, authority);
     expect(lane.lane_type).toBe("surface");
+    expect(lane.canon_lane_id).toBe("build_lane");
     expect(res.ok).toBe(true);
   });
 });

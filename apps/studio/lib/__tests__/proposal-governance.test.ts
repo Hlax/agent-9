@@ -1,13 +1,46 @@
 import { describe, it, expect } from "vitest";
 import {
+  classifyProposalLane,
   canCreateProposal,
   canTransitionProposalState,
   canPromoteProposalToStaging,
   canPromoteProposalToPublic,
   evaluateGovernanceGate,
+  validateProposalType,
   GOVERNANCE_REASON_CODES,
   type LaneType,
 } from "../proposal-governance";
+
+describe("Governance V1: canon-driven lane classification", () => {
+  it("classifies by proposal_type from canon (system_change → build_lane → surface)", () => {
+    const res = classifyProposalLane({ proposal_type: "system_change" });
+    expect(res.lane_type).toBe("surface");
+    expect(res.canon_lane_id).toBe("build_lane");
+    expect(res.reason_codes).toEqual([]);
+    expect(res.classification_reason).toContain("primary_lane=build_lane");
+  });
+
+  it("classifies new_agent → system_lane → system", () => {
+    const res = classifyProposalLane({ proposal_type: "new_agent" });
+    expect(res.lane_type).toBe("system");
+    expect(res.canon_lane_id).toBe("system_lane");
+  });
+
+  it("returns PROPOSAL_TYPE_NOT_IN_CANON and defaults to surface for unknown proposal_type", () => {
+    const res = classifyProposalLane({ proposal_type: "unknown_type_xyz" });
+    expect(res.lane_type).toBe("surface");
+    expect(res.reason_codes).toContain(GOVERNANCE_REASON_CODES.PROPOSAL_TYPE_NOT_IN_CANON);
+  });
+
+  it("validateProposalType returns true for canon types", () => {
+    expect(validateProposalType("schema_change")).toBe(true);
+    expect(validateProposalType("refactor_plan")).toBe(true);
+  });
+
+  it("validateProposalType returns false for unknown types", () => {
+    expect(validateProposalType("unknown_xyz")).toBe(false);
+  });
+});
 
 describe("Governance V1: runner authority for proposal creation", () => {
   it("allows runner to create surface proposals", () => {
@@ -17,17 +50,18 @@ describe("Governance V1: runner authority for proposal creation", () => {
     expect(res.reason_codes).toEqual([]);
   });
 
-  it("allows runner to create medium proposals", () => {
+  it("blocks runner (agent_9) from creating medium (audit_lane) proposals when canon does not grant audit_lane", () => {
     const res = canCreateProposal("medium", "runner");
-    expect(res.ok).toBe(true);
-    expect(res.decision).toBe("allow");
-  });
-
-  it("blocks runner from creating system proposals", () => {
-    const res = canCreateProposal("system", "runner");
     expect(res.ok).toBe(false);
     expect(res.decision).toBe("block");
-    expect(res.reason_codes).toContain(GOVERNANCE_REASON_CODES.RUNNER_SYSTEM_PROPOSAL_FORBIDDEN);
+    expect(res.reason_codes).toContain(GOVERNANCE_REASON_CODES.AGENT_NOT_ALLOWED_FOR_LANE);
+  });
+
+  it("allows runner (agent_9) to create system proposals when canon grants lane_permissions", () => {
+    const res = canCreateProposal("system", "runner");
+    expect(res.ok).toBe(true);
+    expect(res.decision).toBe("allow");
+    expect(res.reason_codes).toEqual([]);
   });
 });
 
@@ -149,6 +183,5 @@ describe("Governance V1: gate behavior", () => {
     expect(res.decision).toBe("block");
     expect(res.reason_codes).toContain(GOVERNANCE_REASON_CODES.NON_SURFACE_PROMOTION_BLOCK);
   });
-}
-);
+});
 

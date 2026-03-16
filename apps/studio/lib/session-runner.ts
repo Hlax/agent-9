@@ -41,9 +41,7 @@ import {
 } from "@/lib/project-thread-selection";
 import {
   getMaxArtifactsPerSession,
-  getMaxPendingAvatarProposals,
-  getMaxPendingExtensionProposals,
-  getMaxPendingHabitatLayoutProposals,
+  getMaxPendingProposalsByProposalType,
   isOverTokenLimit,
   getArchiveDecayHalfLifeDays,
 } from "@/lib/stop-limits";
@@ -1762,6 +1760,13 @@ async function getDuplicateSignalForProposalGate(
   }
 }
 
+/**
+ * Manage proposals for this session. Agent-9 canon-native:
+ * - Emits proposal_type only from canon (layout_change, embodiment_change, integration_change).
+ * - Resolves lane_id via classifyProposalLane({ proposal_type }).
+ * - Runner identity maps to agent_9 for authority checks.
+ * - No Twin-only branches (habitat_layout, avatar_candidate, extension as role names).
+ */
 async function manageProposals(state: SessionExecutionState): Promise<SessionExecutionState> {
   const supabase = state.supabase;
   const artifact = state.primaryArtifact;
@@ -1780,28 +1785,16 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
     governanceEvidence,
   } = state;
 
-  // Proposal lane precedence (explicit policy): 1. Concept → surface habitat; 2. Image → avatar; 3. Extension → medium.
-  // Later lanes may overwrite proposalOutcome until multi-outcome trace (e.g. proposal_attempts) is introduced.
+  // Canon-native: proposal_type drives lane and caps. Runner identity = agent_9.
   const duplicate_signal = await getDuplicateSignalForProposalGate(supabase);
+  const authority = getProposalAuthority("runner");
 
   if (artifact.medium === "concept") {
-    // Governance V1: classify lane/role for habitat layout proposals and
-    // enforce runner authority + confidence/evidence gates before creation.
-    const laneInfo = classifyProposalLane({
-      requested_lane: "surface",
-      proposal_role: "habitat_layout",
-      target_surface: "staging_habitat",
-      target_type: "concept",
-    });
-    const authority = getProposalAuthority("runner");
+    const proposalType = "layout_change";
+    const laneInfo = classifyProposalLane({ proposal_type: proposalType, target_surface: "staging_habitat" });
     const createCheck = canCreateProposal(laneInfo.lane_type, authority);
     if (!createCheck.ok) {
-      const reason =
-        "Proposal skipped by governance: runner is not allowed to create system-level proposals from concept artifacts.";
-      const updatedWarnings = [
-        ...warnings,
-        `${reason} codes=${createCheck.reason_codes.join(",")}`,
-      ];
+      const reason = `Proposal skipped by governance: agent not allowed to create in lane (codes=${createCheck.reason_codes.join(",")}).`;
       governanceEvidence = {
         lane_type: laneInfo.lane_type,
         classification_reason: laneInfo.classification_reason,
@@ -1810,13 +1803,10 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
       };
       return {
         ...state,
-        warnings: updatedWarnings,
+        warnings: [...warnings, reason],
         proposalOutcome: proposalOutcome ?? "skipped_governance",
         governanceEvidence,
-        decisionSummary: {
-          ...decisionSummary,
-          next_action: decisionSummary.next_action ?? reason,
-        },
+        decisionSummary: { ...decisionSummary, next_action: decisionSummary.next_action ?? reason },
       };
     }
 
@@ -1825,20 +1815,13 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
       PROPOSAL_CONFIDENCE_MIN,
       proposalPressure
     );
-    if (effectiveConfidenceMin !== PROPOSAL_CONFIDENCE_MIN) {
-      console.log("[session] proposal_pressure_applied", {
-        proposal_pressure: proposalPressure,
-        base_confidence_min: PROPOSAL_CONFIDENCE_MIN,
-        effective_confidence_min: effectiveConfidenceMin,
-      });
-    }
     const hasMinimumEvidence =
       state.confidence_truth === "inferred" &&
       typeof confidence === "number" &&
       confidence >= effectiveConfidenceMin;
     const gate = evaluateGovernanceGate({
       lane_type: laneInfo.lane_type,
-      proposal_role: laneInfo.proposal_role ?? "habitat_layout",
+      proposal_role: proposalType,
       current_state: null,
       target_state: "pending_review",
       actor_authority: authority,
@@ -1850,11 +1833,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
       const reason =
         state.confidence_truth === "defaulted"
           ? "Proposal skipped: confidence was defaulted and governance gate blocked creation."
-          : `Proposal skipped: governance gate reported insufficient evidence for creating a habitat layout proposal (codes=${gate.reason_codes.join(",")}).`;
-      const updatedWarnings = [
-        ...warnings,
-        `${reason}`,
-      ];
+          : `Proposal skipped: governance gate reported insufficient evidence (codes=${gate.reason_codes.join(",")}).`;
       governanceEvidence = {
         lane_type: laneInfo.lane_type,
         classification_reason: laneInfo.classification_reason,
@@ -1863,20 +1842,14 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
       };
       return {
         ...state,
-        warnings: updatedWarnings,
+        warnings: [...warnings, reason],
         proposalOutcome: proposalOutcome ?? "skipped_governance",
         governanceEvidence,
-        decisionSummary: {
-          ...decisionSummary,
-          next_action: decisionSummary.next_action ?? reason,
-        },
+        decisionSummary: { ...decisionSummary, next_action: decisionSummary.next_action ?? reason },
       };
     }
     if (gate.decision === "warn") {
-      warnings = [
-        ...warnings,
-        `Governance gate warning for habitat_layout proposal creation (codes=${gate.reason_codes.join(",")}).`,
-      ];
+      warnings = [...warnings, `Governance gate warning for ${proposalType} (codes=${gate.reason_codes.join(",")}).`];
     }
     governanceEvidence = {
       lane_type: laneInfo.lane_type,
@@ -1894,216 +1867,194 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
     });
     if (!eligibility.eligible) {
       decisionSummary = { ...decisionSummary, next_action: decisionSummary.next_action ?? eligibility.reason };
-        // Explicitly record why the proposal path was not taken for this concept.
-        // This makes traces easier to interpret without adding new behavior.
-        state = { ...state, proposalOutcome: "skipped_ineligible", decisionSummary };
+      state = { ...state, proposalOutcome: "skipped_ineligible", decisionSummary };
     } else {
-      const cap = getMaxPendingHabitatLayoutProposals();
+      const cap = getMaxPendingProposalsByProposalType(proposalType);
       const { data: existingActive } = await supabase
         .from("proposal_record")
         .select("proposal_record_id, proposal_state, created_at")
-        .eq("lane_type", "surface")
-        .eq("proposal_role", "habitat_layout")
+        .eq("lane_type", laneInfo.lane_type)
+        .eq("proposal_type", proposalType)
         .eq("target_surface", "staging_habitat")
         .in("proposal_state", ["pending_review", "approved_for_staging", "staged"]);
 
       const count = Array.isArray(existingActive) ? existingActive.length : 0;
       if (cap > 0 && count >= cap) {
-        console.log("[session] skipping habitat_layout proposal: backlog at cap", {
-          count,
-          cap,
-          role: "habitat_layout",
-        });
-        if (!decisionSummary.next_action) {
-          decisionSummary = {
-            ...decisionSummary,
-            next_action:
-              "Focus on reviewing existing habitat layout proposals before creating new ones (backlog at cap).",
-          };
-        }
+        console.log("[session] skipping layout_change proposal: backlog at cap", { count, cap, proposal_type: proposalType });
+        decisionSummary = {
+          ...decisionSummary,
+          next_action: decisionSummary.next_action ?? "Focus on reviewing existing layout proposals before creating new ones (backlog at cap).",
+        };
         state = { ...state, proposalOutcome: "skipped_cap", decisionSummary };
       } else {
-        // Canon: do not create a new proposal if this artifact already has a rejected/archived proposal (same lane/role).
         const { data: existingRejected } = await supabase
           .from("proposal_record")
           .select("proposal_record_id")
           .eq("artifact_id", artifact.artifact_id)
-          .eq("lane_type", "surface")
-          .eq("proposal_role", "habitat_layout")
+          .eq("proposal_type", proposalType)
           .in("proposal_state", ["rejected", "archived"])
           .limit(1)
           .maybeSingle();
         if (existingRejected) {
           decisionSummary = {
             ...decisionSummary,
-            next_action:
-              decisionSummary.next_action ?? "Proposal not created: a prior proposal for this concept was rejected or archived.",
+            next_action: decisionSummary.next_action ?? "Proposal not created: a prior proposal for this concept was rejected or archived.",
           };
           state = { ...state, proposalOutcome: "skipped_rejected_archived", decisionSummary };
         } else {
-        const minimalPayload = buildMinimalHabitatPayloadFromConcept(artifact.title, artifact.summary);
-        const validated = validateHabitatPayload(minimalPayload);
-        const hasPayload = validated.success;
-        const summary = hasPayload
-          ? summaryFromHabitatPayload(validated.data)
-          : (artifact.summary?.slice(0, 2000) ?? null);
+          const minimalPayload = buildMinimalHabitatPayloadFromConcept(artifact.title, artifact.summary);
+          const validated = validateHabitatPayload(minimalPayload);
+          const hasPayload = validated.success;
+          const summary = hasPayload
+            ? summaryFromHabitatPayload(validated.data)
+            : (artifact.summary?.slice(0, 2000) ?? null);
 
-        if (Array.isArray(existingActive) && existingActive.length > 0) {
-          const sorted = [...existingActive].sort(
-            (a, b) =>
-              new Date(b.created_at as string).getTime() - new Date(a.created_at as string).getTime()
-          );
-          const newest = sorted[0];
-          const older = sorted.slice(1);
-          if (newest) {
-            traceProposalId = newest.proposal_record_id as string;
-            traceProposalType = "surface";
-            const { error: updateProposalError } = await supabase
-              .from("proposal_record")
-              .update({
-                title: artifact.title,
-                summary,
-                habitat_payload_json: hasPayload ? (validated.data as object) : null,
-                artifact_id: artifact.artifact_id,
-                target_id: artifact.artifact_id,
-                updated_at: new Date().toISOString(),
-              })
-              .eq("proposal_record_id", newest.proposal_record_id);
-            if (updateProposalError) {
-              const msg = `habitat_layout proposal update failed: ${updateProposalError.message}`;
-              console.warn("[session]", msg, { proposal_record_id: newest.proposal_record_id });
-              warnings = [...warnings, msg];
-            } else {
-              proposalCreated = true;
-              proposalOutcome = "updated";
-            }
+          if (Array.isArray(existingActive) && existingActive.length > 0) {
+            const sorted = [...existingActive].sort(
+              (a, b) =>
+                new Date(b.created_at as string).getTime() - new Date(a.created_at as string).getTime()
+            );
+            const newest = sorted[0];
+            const older = sorted.slice(1);
+            if (newest) {
+              traceProposalId = newest.proposal_record_id as string;
+              traceProposalType = proposalType;
+              const { error: updateProposalError } = await supabase
+                .from("proposal_record")
+                .update({
+                  title: artifact.title,
+                  summary,
+                  habitat_payload_json: hasPayload ? (validated.data as object) : null,
+                  artifact_id: artifact.artifact_id,
+                  target_id: artifact.artifact_id,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("proposal_record_id", newest.proposal_record_id);
+              if (updateProposalError) {
+                warnings = [...warnings, `layout_change proposal update failed: ${updateProposalError.message}`];
+              } else {
+                proposalCreated = true;
+                proposalOutcome = "updated";
+              }
 
-            if (older.length > 0) {
-              // System-initiated staling: the runner is refreshing the newest active
-              // habitat_layout proposal and retiring superseded older ones. Only
-              // proposals for which pending_review/approved_for_staging/staged → archived
-              // is a legal FSM transition are updated. This uses the canonical guard to
-              // keep the archival path consistent with human-driven governance transitions.
-              const legalToArchive = older.filter((o) =>
-                canTransitionProposalState({
-                  current_state: o.proposal_state as string,
-                  target_state: "archived",
-                  lane_type: "surface",
-                  actor_authority: authority,
-                }).ok
-              );
-              if (legalToArchive.length > 0) {
-                const { error: archiveOlderError } = await supabase
-                  .from("proposal_record")
-                  .update({
-                    proposal_state: "archived",
-                    updated_at: new Date().toISOString(),
-                  })
-                  .in(
-                    "proposal_record_id",
-                    legalToArchive.map((o) => o.proposal_record_id)
-                  );
-                if (archiveOlderError) {
-                  console.warn("[session] archiving older habitat_layout proposals failed", {
-                    error: archiveOlderError.message,
-                    count: legalToArchive.length,
-                  });
+              if (older.length > 0) {
+                const legalToArchive = older.filter((o) =>
+                  canTransitionProposalState({
+                    current_state: o.proposal_state as string,
+                    target_state: "archived",
+                    lane_type: laneInfo.lane_type,
+                    actor_authority: authority,
+                  }).ok
+                );
+                if (legalToArchive.length > 0) {
+                  await supabase
+                    .from("proposal_record")
+                    .update({ proposal_state: "archived", updated_at: new Date().toISOString() })
+                    .in("proposal_record_id", legalToArchive.map((o) => o.proposal_record_id));
                 }
               }
             }
-          }
-        } else {
-          const proposalRow = {
-            lane_type: "surface" as const,
-            target_type: "concept",
-            target_id: artifact.artifact_id,
-            artifact_id: artifact.artifact_id,
-            title: artifact.title,
-            summary,
-            proposal_state: "pending_review",
-            target_surface: "staging_habitat",
-            proposal_type: "layout",
-            proposal_role: "habitat_layout",
-            habitat_payload_json: hasPayload ? (validated.data as object) : null,
-            preview_uri: null,
-            review_note: null,
-            created_by: state.createdBy,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          };
-          const { data: insertedHabitat, error: insertHabitatError } = await supabase
-            .from("proposal_record")
-            .insert(proposalRow)
-            .select("proposal_record_id")
-            .single();
-          if (insertHabitatError) {
-            const msg = `habitat_layout proposal insert failed: ${insertHabitatError.message}`;
-            console.warn("[session]", msg, { artifact_id: artifact.artifact_id });
-            warnings = [...warnings, msg];
-          } else if (insertedHabitat?.proposal_record_id) {
-            traceProposalId = insertedHabitat.proposal_record_id as string;
-            traceProposalType = "surface";
-            proposalCreated = true;
-            proposalOutcome = "created";
-            decisionSummary = {
-              ...decisionSummary,
-              next_action:
-                decisionSummary.next_action ??
-                "Create or refine a habitat layout proposal for the staging habitat from this concept.",
+          } else {
+            const proposalRow = {
+              lane_type: laneInfo.lane_type,
+              target_type: "concept",
+              target_id: artifact.artifact_id,
+              artifact_id: artifact.artifact_id,
+              title: artifact.title,
+              summary,
+              proposal_state: "pending_review",
+              target_surface: "staging_habitat",
+              proposal_type: proposalType,
+              proposal_role: proposalType,
+              habitat_payload_json: hasPayload ? (validated.data as object) : null,
+              preview_uri: null,
+              review_note: null,
+              created_by: state.createdBy,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
             };
+            const { data: inserted, error: insertError } = await supabase
+              .from("proposal_record")
+              .insert(proposalRow)
+              .select("proposal_record_id")
+              .single();
+            if (insertError) {
+              warnings = [...warnings, `layout_change proposal insert failed: ${insertError.message}`];
+            } else if (inserted?.proposal_record_id) {
+              traceProposalId = inserted.proposal_record_id as string;
+              traceProposalType = proposalType;
+              proposalCreated = true;
+              proposalOutcome = "created";
+              decisionSummary = {
+                ...decisionSummary,
+                next_action: decisionSummary.next_action ?? "Create or refine a layout proposal for staging from this concept.",
+              };
+            }
           }
-        }
         }
       }
     }
   }
 
   if (artifact.medium === "image") {
-    const { data: existingAvatar } = await supabase
+    const proposalType = "embodiment_change";
+    const laneInfo = classifyProposalLane({ proposal_type: proposalType, target_surface: "identity" });
+    const createCheck = canCreateProposal(laneInfo.lane_type, authority);
+    if (!createCheck.ok) {
+      governanceEvidence = {
+        lane_type: laneInfo.lane_type,
+        classification_reason: laneInfo.classification_reason,
+        actor_authority: authority,
+        reason_codes: createCheck.reason_codes,
+      };
+      return {
+        ...state,
+        warnings: [...warnings, `Proposal skipped by governance (codes=${createCheck.reason_codes.join(",")}).`],
+        proposalOutcome: proposalOutcome ?? "skipped_governance",
+        governanceEvidence,
+        decisionSummary,
+      };
+    }
+
+    const { data: existingForArtifact } = await supabase
       .from("proposal_record")
       .select("proposal_record_id")
-      .eq("target_type", "avatar_candidate")
+      .eq("proposal_type", proposalType)
       .eq("artifact_id", artifact.artifact_id)
       .limit(1)
       .maybeSingle();
-    if (!existingAvatar) {
-      const avatarCap = getMaxPendingAvatarProposals();
-      const { count: pendingAvatarCount } = await supabase
+    if (!existingForArtifact) {
+      const cap = getMaxPendingProposalsByProposalType(proposalType);
+      const { count: pendingCount } = await supabase
         .from("proposal_record")
         .select("proposal_record_id", { count: "exact", head: true })
-        .eq("target_type", "avatar_candidate")
+        .eq("proposal_type", proposalType)
         .eq("proposal_state", "pending_review");
-      const pending = pendingAvatarCount ?? 0;
-      if (avatarCap > 0 && pending >= avatarCap) {
-        console.log("[session] skipping avatar_candidate proposal: backlog at cap", {
-          pending,
-          cap: avatarCap,
-          role: "avatar_candidate",
-        });
+      const pending = pendingCount ?? 0;
+      if (cap > 0 && pending >= cap) {
+        console.log("[session] skipping embodiment_change proposal: backlog at cap", { pending, cap });
         proposalOutcome = proposalOutcome ?? "skipped_cap";
         decisionSummary = {
           ...decisionSummary,
-          next_action:
-            decisionSummary.next_action ??
-            "Focus on reviewing existing avatar proposals before creating new ones (backlog at cap).",
+          next_action: decisionSummary.next_action ?? "Focus on reviewing existing embodiment proposals before creating new ones (backlog at cap).",
         };
       } else {
-        const avatarSummary = capSummaryTo200Words(
-          artifact.summary ?? artifact.title ?? "Proposed as public avatar."
+        const summary = capSummaryTo200Words(
+          artifact.summary ?? artifact.title ?? "Proposed as public embodiment."
         );
-        const { data: insertedAvatar, error: insertAvatarError } = await supabase
+        const { data: inserted, error: insertError } = await supabase
           .from("proposal_record")
           .insert({
-            lane_type: "surface",
-            target_type: "avatar_candidate",
+            lane_type: laneInfo.lane_type,
+            target_type: "embodiment",
             target_id: artifact.artifact_id,
             artifact_id: artifact.artifact_id,
-            title: artifact.title ?? "Avatar candidate",
-            summary: avatarSummary || null,
+            title: artifact.title ?? "Embodiment candidate",
+            summary: summary || null,
             proposal_state: "pending_review",
             target_surface: "identity",
-            proposal_type: "avatar",
-            proposal_role: "avatar_candidate",
+            proposal_type: proposalType,
+            proposal_role: proposalType,
             preview_uri: artifact.preview_uri ?? null,
             review_note: null,
             created_by: state.createdBy,
@@ -2112,20 +2063,16 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
           })
           .select("proposal_record_id")
           .single();
-        if (insertAvatarError) {
-          const msg = `avatar_candidate proposal insert failed: ${insertAvatarError.message}`;
-          console.warn("[session]", msg, { artifact_id: artifact.artifact_id });
-          warnings = [...warnings, msg];
-        } else if (insertedAvatar?.proposal_record_id) {
-          traceProposalId = insertedAvatar.proposal_record_id as string;
-          traceProposalType = "avatar";
+        if (insertError) {
+          warnings = [...warnings, `embodiment_change proposal insert failed: ${insertError.message}`];
+        } else if (inserted?.proposal_record_id) {
+          traceProposalId = inserted.proposal_record_id as string;
+          traceProposalType = proposalType;
           proposalCreated = true;
           proposalOutcome = "created";
           decisionSummary = {
             ...decisionSummary,
-            next_action:
-              decisionSummary.next_action ??
-              "Propose a new avatar candidate for review based on this image.",
+            next_action: decisionSummary.next_action ?? "Propose a new embodiment candidate for review based on this image.",
           };
         }
       }
@@ -2133,30 +2080,18 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
       proposalOutcome = proposalOutcome ?? "skipped_duplicate";
       decisionSummary = {
         ...decisionSummary,
-        next_action:
-          decisionSummary.next_action ??
-          "Proposal not created: this image already has an avatar candidate proposal.",
+        next_action: decisionSummary.next_action ?? "Proposal not created: this image already has an embodiment proposal.",
       };
     }
   }
 
-  // Phase 3: extension proposal — creation-only; no apply in runner. Medium lane: resolves to roadmap/spec, not staging/public.
+  // Canon-native: integration_change (capability/extension) — creation-only; no apply in runner.
   if (isExtensionProposalEligible(state)) {
-    const authority = getProposalAuthority("runner");
-    const laneInfo = classifyProposalLane({
-      requested_lane: "medium",
-      proposal_role: state.extension_classification,
-      target_surface: null,
-      target_type: "extension",
-    });
+    const proposalType = "integration_change";
+    const laneInfo = classifyProposalLane({ proposal_type: proposalType });
     const createCheck = canCreateProposal(laneInfo.lane_type, authority);
     if (!createCheck.ok) {
-      const reason =
-        "Extension proposal skipped by governance: runner is not allowed to create system-level proposals.";
-      warnings = [
-        ...warnings,
-        `${reason} codes=${createCheck.reason_codes.join(",")}`,
-      ];
+      warnings = [...warnings, `Proposal skipped by governance (codes=${createCheck.reason_codes.join(",")}).`];
       governanceEvidence = {
         lane_type: laneInfo.lane_type,
         classification_reason: laneInfo.classification_reason,
@@ -2181,7 +2116,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
       confidence >= PROPOSAL_CONFIDENCE_MIN;
     const gate = evaluateGovernanceGate({
       lane_type: laneInfo.lane_type,
-      proposal_role: laneInfo.proposal_role ?? state.extension_classification ?? "extension",
+      proposal_role: proposalType,
       current_state: null,
       target_state: "pending_review",
       actor_authority: authority,
@@ -2190,11 +2125,7 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
       has_minimum_evidence: hasMinimumEvidence,
     });
     if (gate.decision === "block") {
-      const reason =
-        state.confidence_truth === "defaulted"
-          ? "Extension proposal skipped: confidence was defaulted and governance gate blocked creation."
-          : `Extension proposal skipped: governance gate reported insufficient evidence (codes=${gate.reason_codes.join(",")}).`;
-      warnings = [...warnings, reason];
+      warnings = [...warnings, `Proposal skipped: governance gate blocked (codes=${gate.reason_codes.join(",")}).`];
       governanceEvidence = {
         lane_type: laneInfo.lane_type,
         classification_reason: laneInfo.classification_reason,
@@ -2209,17 +2140,11 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
         traceProposalType,
         proposalOutcome: proposalOutcome ?? "skipped_governance",
         governanceEvidence,
-        decisionSummary: {
-          ...decisionSummary,
-          next_action: decisionSummary.next_action ?? reason,
-        },
+        decisionSummary: { ...decisionSummary, next_action: decisionSummary.next_action ?? "Proposal skipped by governance gate." },
       };
     }
     if (gate.decision === "warn") {
-      warnings = [
-        ...warnings,
-        `Governance gate warning for extension proposal creation (codes=${gate.reason_codes.join(",")}).`,
-      ];
+      warnings = [...warnings, `Governance gate warning for ${proposalType} (codes=${gate.reason_codes.join(",")}).`];
     }
     governanceEvidence = {
       lane_type: laneInfo.lane_type,
@@ -2228,40 +2153,26 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
       reason_codes: gate.reason_codes,
     };
 
-    const extensionCap = getMaxPendingExtensionProposals();
-    const EXTENSION_PROPOSAL_ROLES = [
-      "medium_extension",
-      "toolchain_extension",
-      "workflow_extension",
-      "surface_environment_extension",
-      "system_capability_extension",
-    ] as const;
-    const { count: pendingExtensionCount } = await supabase
+    const cap = getMaxPendingProposalsByProposalType(proposalType);
+    const { count: pendingCount } = await supabase
       .from("proposal_record")
       .select("proposal_record_id", { count: "exact", head: true })
-      .eq("lane_type", "medium")
-      .in("proposal_role", EXTENSION_PROPOSAL_ROLES)
+      .eq("proposal_type", proposalType)
       .eq("proposal_state", "pending_review");
-    const pending = pendingExtensionCount ?? 0;
-    if (extensionCap > 0 && pending >= extensionCap) {
-      console.log("[session] skipping extension proposal: backlog at cap", {
-        pending,
-        cap: extensionCap,
-      });
+    const pending = pendingCount ?? 0;
+    if (cap > 0 && pending >= cap) {
+      console.log("[session] skipping integration_change proposal: backlog at cap", { pending, cap });
       proposalOutcome = proposalOutcome ?? "skipped_cap";
       decisionSummary = {
         ...decisionSummary,
-        next_action:
-          decisionSummary.next_action ??
-          "Focus on reviewing existing extension proposals before creating new ones (backlog at cap).",
+        next_action: decisionSummary.next_action ?? "Focus on reviewing existing integration proposals before creating new ones (backlog at cap).",
       };
     } else {
-      // Structural duplicate guard: artifact_id + role cannot have multiple pending extension proposals.
       const { data: existingForArtifact } = await supabase
         .from("proposal_record")
         .select("proposal_record_id")
-        .eq("lane_type", "medium")
-        .eq("proposal_role", state.extension_classification!)
+        .eq("lane_type", laneInfo.lane_type)
+        .eq("proposal_type", proposalType)
         .eq("artifact_id", artifact!.artifact_id)
         .eq("proposal_state", "pending_review")
         .limit(1)
@@ -2270,59 +2181,52 @@ async function manageProposals(state: SessionExecutionState): Promise<SessionExe
         proposalOutcome = proposalOutcome ?? "skipped_duplicate";
         decisionSummary = {
           ...decisionSummary,
-          next_action:
-            decisionSummary.next_action ??
-            "Proposal not created: this artifact already has a pending extension proposal for this role.",
+          next_action: decisionSummary.next_action ?? "Proposal not created: this artifact already has a pending integration proposal.",
         };
       } else {
         const rationale = [critique!.medium_fit_note, critique!.overall_summary]
           .filter(Boolean)
           .join(" ");
         const bodySummary = capSummaryTo200Words(
-          rationale || artifact!.summary || artifact!.title || "Capability-fit suggests extension."
+          rationale || artifact!.summary || artifact!.title || "Capability-fit suggests integration."
         );
-        // UX: make it obvious to operators this is an extension proposal, not a config change (plan §pre-push).
         const summary = bodySummary
-          ? `Extension proposal (operator review only; no apply in runner). ${bodySummary}`
-          : "Extension proposal (operator review only; no apply in runner).";
-        const extensionRow = {
-          lane_type: "medium" as const,
-          target_type: "extension" as const,
+          ? `Integration proposal (operator review only; no apply in runner). ${bodySummary}`
+          : "Integration proposal (operator review only; no apply in runner).";
+        const row = {
+          lane_type: laneInfo.lane_type,
+          target_type: "integration",
           target_id: artifact!.artifact_id,
           artifact_id: artifact!.artifact_id,
           title: artifact!.title
-            ? `Extension: ${state.extension_classification} — ${artifact!.title.slice(0, 80)}`
-            : `Extension: ${state.extension_classification}`,
+            ? `Integration: ${state.extension_classification} — ${artifact!.title.slice(0, 80)}`
+            : `Integration: ${state.extension_classification}`,
           summary,
           proposal_state: "pending_review",
-          proposal_role: state.extension_classification!,
+          proposal_role: proposalType,
           target_surface: null,
-          proposal_type: "extension",
+          proposal_type: proposalType,
           preview_uri: null,
           review_note: null,
           created_by: state.createdBy,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
-        const { data: insertedExtension, error: insertExtensionError } = await supabase
+        const { data: inserted, error: insertError } = await supabase
           .from("proposal_record")
-          .insert(extensionRow)
+          .insert(row)
           .select("proposal_record_id")
           .single();
-        if (insertExtensionError) {
-          const msg = `extension proposal insert failed: ${insertExtensionError.message}`;
-          console.warn("[session]", msg, { artifact_id: artifact!.artifact_id });
-          warnings = [...warnings, msg];
-        } else if (insertedExtension?.proposal_record_id) {
-          traceProposalId = insertedExtension.proposal_record_id as string;
-          traceProposalType = "extension";
+        if (insertError) {
+          warnings = [...warnings, `integration_change proposal insert failed: ${insertError.message}`];
+        } else if (inserted?.proposal_record_id) {
+          traceProposalId = inserted.proposal_record_id as string;
+          traceProposalType = proposalType;
           proposalCreated = true;
           proposalOutcome = "created";
           decisionSummary = {
             ...decisionSummary,
-            next_action:
-              decisionSummary.next_action ??
-              "Extension proposal created for operator review (no apply path in runner).",
+            next_action: decisionSummary.next_action ?? "Integration proposal created for operator review (no apply path in runner).",
           };
         }
       }

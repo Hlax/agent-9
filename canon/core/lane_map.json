@@ -1,0 +1,10 @@
+{
+  "version": "1.0.0",
+  "lanes": [
+    { "lane_id": "build_lane", "label": "Build Lane", "description": "Implementation-oriented changes including code, schema, UI, config, integrations, and workflow work." },
+    { "lane_id": "system_lane", "label": "System Lane", "description": "System topology, orchestrator behavior, first-class agent changes, lifecycle changes, and control-plane evolution." },
+    { "lane_id": "canon_lane", "label": "Canon Lane", "description": "Constitutional changes to ontology, authority, proposal rules, governance, audit, and promotion behavior." },
+    { "lane_id": "audit_lane", "label": "Audit Lane", "description": "Risk findings, remediation packets, compliance checks, and audit records." },
+    { "lane_id": "promotion_lane", "label": "Promotion Lane", "description": "Promotion-ready packages, final human approval, rejection, rollback initiation, and snapshot creation." }
+  ]
+}
